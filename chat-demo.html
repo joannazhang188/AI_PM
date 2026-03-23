@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>产品经理工作助手</title>
+    <link rel="stylesheet" href="./chat-demo.css" />
+  </head>
+  <body>
+    <div class="app-container">
+      <header class="header">
+        <div class="header-left">
+          <div class="logo">AI</div>
+          <span class="title">AI助手</span>
+        </div>
+        <button class="avatar-button" id="userMenuButton" type="button" aria-label="用户菜单">
+          <img class="avatar-image" src="https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png" alt="用户头像" />
+        </button>
+      </header>
+
+      <div class="main-container">
+        <aside class="aside">
+          <div class="aside-buttons">
+            <button class="new-btn primary" id="createNewChatBtn" type="button">新建对话</button>
+            <button class="new-btn success" id="createNewProjectBtn" type="button">新建项目</button>
+          </div>
+          <div class="chat-list" id="sidebarTree"></div>
+        </aside>
+
+        <main class="main">
+          <section class="empty-chat" id="emptyChat">
+            <h2>产品经理工作助手</h2>
+            <p class="empty-desc">选择下方快捷能力，高效完成工作流程</p>
+            <div class="shortcut-abilities" id="shortcutAbilities"></div>
+
+            <div class="empty-chat-input-area">
+              <textarea
+                class="input-box empty-input-box"
+                id="emptyInputContent"
+                placeholder="直接输入您的问题，支持上传图片/文件辅助说明..."
+                rows="4"
+              ></textarea>
+
+              <div class="input-actions">
+                <div class="action-buttons">
+                  <label class="upload-trigger" for="emptyImageInput">图片</label>
+                  <label class="upload-trigger" for="emptyFileInput">文件</label>
+                  <button class="library-btn" id="libraryBtnEmpty" type="button">资料库</button>
+                  <input id="emptyImageInput" type="file" accept="image/*" hidden />
+                  <input id="emptyFileInput" type="file" accept=".doc,.docx,.pdf,.md,.txt,.xlsx,.xls" hidden />
+                </div>
+                <button class="send-btn empty-send-btn" id="sendEmptyChatBtn" type="button">发送</button>
+              </div>
+
+              <div class="upload-preview hidden" id="emptyUploadPreview"></div>
+            </div>
+          </section>
+
+          <section class="chat-container hidden" id="chatContainer">
+            <div class="chat-header">
+              <span class="chat-name" id="currentChatTitle">未命名对话</span>
+              <div class="header-actions">
+                <button class="text-button" id="chatActionBtn" type="button">操作</button>
+                <button class="text-button" id="exitCurrentChatBtn" type="button">退出对话</button>
+              </div>
+            </div>
+
+            <div class="message-list" id="messageList"></div>
+
+            <div class="chat-input-area">
+              <div class="shortcut-tag hidden" id="activeAbilityTag">
+                <span id="activeAbilityName"></span>
+                <button class="tag-close" id="closeAbilityBtn" type="button">×</button>
+              </div>
+
+              <textarea
+                class="input-box"
+                id="inputContent"
+                placeholder="发消息…支持上传图片/文件辅助说明"
+                rows="4"
+              ></textarea>
+
+              <div class="input-actions">
+                <div class="action-buttons">
+                  <label class="upload-trigger" for="imageInput">图片</label>
+                  <label class="upload-trigger" for="fileInput">文件</label>
+                  <button class="library-btn" id="libraryBtnChat" type="button">资料库</button>
+                  <input id="imageInput" type="file" accept="image/*" hidden />
+                  <input id="fileInput" type="file" accept=".doc,.docx,.pdf,.md,.txt,.xlsx,.xls" hidden />
+                </div>
+                <button class="send-btn" id="sendMessageBtn" type="button">发送</button>
+              </div>
+
+              <div class="upload-preview hidden" id="uploadPreview"></div>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <div class="context-menu hidden" id="itemMenu"></div>
+    <div class="modal-overlay hidden" id="modalOverlay"></div>
+
+    <div class="modal hidden" id="projectModal">
+      <div class="modal-card">
+        <div class="modal-title">新建项目</div>
+        <input class="modal-input" id="projectNameInput" type="text" placeholder="请输入项目名称" />
+        <textarea class="modal-input modal-textarea" id="projectDescInput" placeholder="可选，输入项目描述"></textarea>
+        <div class="modal-actions">
+          <button class="modal-btn secondary" id="projectModalCancel" type="button">取消</button>
+          <button class="modal-btn primary" id="projectModalConfirm" type="button">创建</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="renameModal">
+      <div class="modal-card">
+        <div class="modal-title" id="renameModalTitle">重命名</div>
+        <input class="modal-input" id="renameInput" type="text" placeholder="请输入新名称" />
+        <div class="modal-actions">
+          <button class="modal-btn secondary" id="renameModalCancel" type="button">取消</button>
+          <button class="modal-btn primary" id="renameModalConfirm" type="button">确认</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="moveModal">
+      <div class="modal-card">
+        <div class="modal-title">移动至项目</div>
+        <select class="modal-input" id="moveSelect"></select>
+        <div class="modal-actions">
+          <button class="modal-btn secondary" id="moveModalCancel" type="button">取消</button>
+          <button class="modal-btn primary" id="moveModalConfirm" type="button">确认</button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./chat-demo.js"></script>
+  </body>
+</html>
