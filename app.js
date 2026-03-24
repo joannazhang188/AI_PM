@@ -400,6 +400,7 @@ function renderMessageReferences(references) {
             title="${missing ? "该文档已不存在" : "引用到对话框"}"
           >
             <span class="message-reference-chip__name">${escapeHtml(reference.name)}</span>
+            ${missing ? `<span class="message-reference-chip__badge">已失效</span>` : ""}
             <span class="message-reference-chip__meta">${missing ? "该文档已不存在" : "点击引用"}</span>
           </button>
         `;
@@ -693,8 +694,8 @@ function handleAction(event) {
     if (!resource) return;
     if (!window.confirm(`确认删除资源「${resource.name}」？`)) return;
     state.resources = state.resources.filter((item) => item.id !== node.dataset.resourceId);
-    state.composerDraft.attachments = state.composerDraft.attachments.filter((item) => item.sourceResourceId !== node.dataset.resourceId);
-    showToast("删除成功");
+    const removedCount = removeComposerResourceReferences(node.dataset.resourceId);
+    showToast(removedCount ? `删除成功，已移除 ${removedCount} 个失效引用` : "删除成功");
     render();
     return;
   }
@@ -1594,6 +1595,12 @@ function isReferenceMissing(reference) {
     return !getDocumentById(reference.referenceId);
   }
   return false;
+}
+
+function removeComposerResourceReferences(resourceId) {
+  const before = state.composerDraft.attachments.length;
+  state.composerDraft.attachments = state.composerDraft.attachments.filter((item) => item.sourceResourceId !== resourceId);
+  return before - state.composerDraft.attachments.length;
 }
 
 function showToast(message) {

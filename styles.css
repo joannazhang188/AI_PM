@@ -632,7 +632,7 @@ button {
 }
 
 .conversation-view {
-  padding: 14px 10px 8px 0;
+  padding: 16px 12px 10px 0;
 }
 
 .conversation-view .composer-card {
@@ -644,23 +644,23 @@ button {
 }
 
 .conversation-view .composer-inner {
-  padding: 16px 18px 12px;
+  padding: 18px 20px 14px;
 }
 
 .conversation-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 10px;
-  height: calc(100vh - 28px);
+  gap: 14px;
+  height: calc(100vh - 32px);
 }
 
 .conversation-layout.has-document {
-  grid-template-columns: minmax(0, 1.08fr) minmax(380px, 0.92fr);
+  grid-template-columns: minmax(0, 1.16fr) minmax(420px, 0.84fr);
 }
 
 .chat-shell {
   height: 100%;
-  background: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.78);
   overflow: hidden;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
@@ -685,7 +685,7 @@ button {
 }
 
 .chat-messages {
-  padding: 22px 26px;
+  padding: 24px 28px 18px;
   overflow: auto;
 }
 
@@ -726,24 +726,39 @@ button {
 
 .message-reference-chip {
   display: grid;
-  gap: 2px;
-  min-width: 140px;
-  padding: 8px 12px;
+  gap: 4px;
+  min-width: 156px;
+  padding: 10px 12px;
   border-radius: 14px;
   border: 1px solid rgba(85, 99, 167, 0.12);
   background: rgba(255, 255, 255, 0.9);
   text-align: left;
+  box-shadow: 0 8px 18px rgba(32, 42, 74, 0.05);
 }
 
 .message-reference-chip.is-missing {
-  border-color: rgba(224, 88, 88, 0.18);
-  background: rgba(255, 244, 244, 0.95);
+  border-color: rgba(224, 88, 88, 0.3);
+  background: linear-gradient(180deg, rgba(255, 245, 245, 0.98), rgba(255, 236, 236, 0.96));
+  box-shadow: 0 10px 22px rgba(205, 80, 80, 0.08);
+  cursor: not-allowed;
 }
 
 .message-reference-chip__name {
   font-size: 12px;
   font-weight: 700;
   color: #28324f;
+}
+
+.message-reference-chip__badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(214, 74, 74, 0.12);
+  color: #c05858;
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .message-reference-chip__meta {
@@ -854,11 +869,27 @@ button {
 }
 
 .chat-input-dock {
-  padding: 12px 8px 12px 0;
+  padding: 14px 10px 14px 0;
   border-top: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.58);
   position: sticky;
   bottom: 0;
+}
+
+.composer-header {
+  transition: min-height 160ms ease, max-height 160ms ease, opacity 160ms ease;
+}
+
+.composer-header.is-empty {
+  opacity: 0;
+}
+
+.composer-footer {
+  gap: 18px;
+}
+
+.composer-footer__left {
+  gap: 10px;
 }
 
 .library-view {
@@ -997,7 +1028,7 @@ th {
 .doc-panel {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  background: rgba(255, 255, 255, 0.82);
+  background: rgba(255, 255, 255, 0.86);
   overflow: hidden;
 }
 
@@ -1005,8 +1036,8 @@ th {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 10px 16px;
+  gap: 14px;
+  padding: 12px 18px;
   border-bottom: 1px solid var(--border-strong);
 }
 
@@ -1059,18 +1090,20 @@ th {
 }
 
 .doc-tab {
-  min-width: 62px;
-  height: 24px;
+  min-width: 70px;
+  height: 30px;
   border: 1px solid var(--border-strong);
   background: #fff;
+  border-radius: 10px;
 }
 
 .doc-tab.is-active {
-  background: rgba(0, 0, 0, 0.04);
+  background: rgba(88, 95, 255, 0.08);
+  border-color: rgba(88, 95, 255, 0.18);
 }
 
 .doc-content {
-  padding: 24px 20px 34px;
+  padding: 28px 24px 36px;
   overflow: auto;
 }
 
