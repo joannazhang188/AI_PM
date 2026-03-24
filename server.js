@@ -6,21 +6,178 @@ const { spawn } = require("node:child_process");
 const { URL } = require("node:url");
 
 const env = loadEnv(path.join(__dirname, ".env"));
-const PORT = Number(env.PORT || 4173);
+const PORT = Number(process.env.PORT || env.PORT || 4173);
 const MAX_BODY_SIZE = 30 * 1024 * 1024;
 const artifactStore = new Map();
 const resourceStore = new Map();
 const workflowRegistry = {
-  general: { id: "general", name: "普通对话", outputMode: "chat", artifactType: "generic", preferredFormat: "md", editStrategy: "rewrite", systemPrompt: "你是产品经理工作台中的通用 AI 助手。只围绕用户当前输入、引用内容和附件进行理解与输出，不要默认套用任何快捷功能工作流。" },
-  requirement: { id: "requirement", name: "需求澄清", outputMode: "artifact", artifactType: "clarification", preferredFormat: "md", editStrategy: "patch", systemPrompt: "你负责需求澄清。输出重点是需求目标、边界、缺口和待确认项。" },
-  prd: { id: "prd", name: "生成PRD", outputMode: "artifact", artifactType: "prd", preferredFormat: "md", editStrategy: "patch", systemPrompt: "你负责生成 PRD 文档。优先输出结构化、可继续编辑的文档内容。" },
-  prdReview: { id: "prdReview", name: "需求评审", outputMode: "artifact", artifactType: "review", preferredFormat: "md", editStrategy: "patch", systemPrompt: "你负责需求评审。输出评审意见、风险和修改建议。" },
-  story: { id: "story", name: "任务拆解", outputMode: "artifact", artifactType: "story", preferredFormat: "md", editStrategy: "patch", systemPrompt: "你负责任务拆解。输出结构化拆解结果。" },
-  testCase: { id: "testCase", name: "生成测试用例", outputMode: "artifact", artifactType: "testcase", preferredFormat: "md", editStrategy: "patch", systemPrompt: "你负责生成测试用例。输出可继续编辑的测试用例内容。" },
-  testReview: { id: "testReview", name: "测试用例评审", outputMode: "artifact", artifactType: "review", preferredFormat: "md", editStrategy: "patch", systemPrompt: "你负责测试用例评审。输出评审意见和修订建议。" },
-  releaseNote: { id: "releaseNote", name: "产品更新说明", outputMode: "artifact", artifactType: "release", preferredFormat: "md", editStrategy: "patch", systemPrompt: "你负责产品更新说明。输出可发布的更新说明文本。" },
-  competitorAnalysis: { id: "competitorAnalysis", name: "产品竞品分析", outputMode: "artifact", artifactType: "analysis", preferredFormat: "md", editStrategy: "patch", systemPrompt: "你负责产品竞品分析。输出结构化分析报告。" },
-  productResearch: { id: "productResearch", name: "产品调研报告", outputMode: "artifact", artifactType: "report", preferredFormat: "md", editStrategy: "patch", systemPrompt: "你负责产品调研报告。输出可继续编辑的调研内容。" },
+  general: {
+    id: "general",
+    name: "普通对话",
+    outputMode: "chat",
+    artifactType: "generic",
+    preferredFormat: "md",
+    editStrategy: "rewrite",
+    requiresClarify: false,
+    requiresTemplateConfirm: false,
+    supportsRevision: false,
+    allowWebSearch: false,
+    systemPrompt: "你是产品经理工作台中的通用 AI 助手。只围绕用户当前输入、引用内容和附件进行理解与输出，不要默认套用任何快捷功能工作流。",
+  },
+  requirement: {
+    id: "requirement",
+    name: "需求澄清",
+    outputMode: "artifact",
+    artifactType: "clarification",
+    preferredFormat: "md",
+    editStrategy: "patch",
+    requiresClarify: true,
+    requiresTemplateConfirm: true,
+    supportsRevision: true,
+    allowWebSearch: false,
+    systemPrompt: "你负责需求澄清。与用户对话时要优先求证关键需求细节，确认场景、边界、角色、交互方式和限制条件，最后形成需求理解摘要。",
+    defaultTemplate: "# 需求理解摘要\n\n## 背景与目标\n\n## 使用场景\n\n## 关键需求\n\n## 约束与边界\n\n## 待确认问题\n",
+  },
+  prd: {
+    id: "prd",
+    name: "生成PRD",
+    outputMode: "artifact",
+    artifactType: "prd",
+    preferredFormat: "md",
+    editStrategy: "patch",
+    requiresClarify: false,
+    requiresTemplateConfirm: true,
+    supportsRevision: true,
+    allowWebSearch: false,
+    systemPrompt: "你负责生成 PRD 文档。先确认 PRD 模板或目录，再输出结构化、可继续编辑的完整 PRD。",
+    defaultTemplate: "# 产品需求文档\n\n## 1. 背景与目标\n\n## 2. 用户与场景\n\n## 3. 功能范围\n\n## 4. 详细需求\n\n## 5. 非功能要求\n\n## 6. 风险与依赖\n",
+  },
+  prdReview: {
+    id: "prdReview",
+    name: "需求评审",
+    outputMode: "artifact",
+    artifactType: "review",
+    preferredFormat: "md",
+    editStrategy: "patch",
+    requiresClarify: false,
+    requiresTemplateConfirm: true,
+    supportsRevision: true,
+    allowWebSearch: false,
+    systemPrompt: "你负责需求评审。应从产品、技术、业务和交付风险角度输出评审意见和修改建议。",
+    defaultTemplate: "# PRD 评审意见\n\n## 评审范围\n\n## 产品角度\n\n## 技术角度\n\n## 业务角度\n\n## 风险与建议\n",
+  },
+  prototype: {
+    id: "prototype",
+    name: "生成原型图",
+    outputMode: "artifact",
+    artifactType: "prototype",
+    preferredFormat: "html",
+    editStrategy: "patch",
+    requiresClarify: false,
+    requiresTemplateConfirm: true,
+    supportsRevision: true,
+    allowWebSearch: false,
+    systemPrompt: "你负责生成原型图。请先确认页面结构或原型范围，再输出可直接预览的完整 HTML 原型文件。",
+    defaultTemplate: "<!DOCTYPE html>\n<html>\n<head>\n  <meta charset=\"UTF-8\" />\n  <title>原型页面</title>\n</head>\n<body>\n  <main>\n    <header>页面标题</header>\n    <section>核心内容区</section>\n    <footer>底部操作区</footer>\n  </main>\n</body>\n</html>",
+  },
+  story: {
+    id: "story",
+    name: "任务拆解",
+    outputMode: "artifact",
+    artifactType: "story",
+    preferredFormat: "md",
+    editStrategy: "patch",
+    requiresClarify: false,
+    requiresTemplateConfirm: true,
+    supportsRevision: true,
+    allowWebSearch: false,
+    systemPrompt: "你负责任务拆解。根据 PRD 或需求描述输出结构化 Story 任务。",
+    defaultTemplate: "# Story 拆解\n\n## Epic\n\n## Story 列表\n\n### Story 1\n- 目标\n- 验收标准\n",
+  },
+  testCase: {
+    id: "testCase",
+    name: "生成测试用例",
+    outputMode: "artifact",
+    artifactType: "testcase",
+    preferredFormat: "md",
+    editStrategy: "patch",
+    requiresClarify: false,
+    requiresTemplateConfirm: true,
+    supportsRevision: true,
+    allowWebSearch: false,
+    systemPrompt: "你负责生成测试用例。根据 Story 或需求输出结构化、可继续编辑的测试用例。",
+    defaultTemplate: "# 测试用例\n\n| 编号 | 场景 | 前置条件 | 步骤 | 预期结果 |\n| --- | --- | --- | --- | --- |\n",
+  },
+  testReview: {
+    id: "testReview",
+    name: "测试用例评审",
+    outputMode: "artifact",
+    artifactType: "review",
+    preferredFormat: "md",
+    editStrategy: "patch",
+    requiresClarify: false,
+    requiresTemplateConfirm: true,
+    supportsRevision: true,
+    allowWebSearch: false,
+    systemPrompt: "你负责测试用例评审。根据 PRD 评估测试用例的覆盖完整性、遗漏场景和风险。",
+    defaultTemplate: "# 测试用例评审\n\n## 评审范围\n\n## 覆盖充分场景\n\n## 漏测风险\n\n## 修改建议\n",
+  },
+  releaseNote: {
+    id: "releaseNote",
+    name: "产品更新说明",
+    outputMode: "artifact",
+    artifactType: "release",
+    preferredFormat: "md",
+    editStrategy: "patch",
+    requiresClarify: false,
+    requiresTemplateConfirm: true,
+    supportsRevision: true,
+    allowWebSearch: false,
+    systemPrompt: "你负责产品更新说明。根据 PRD 输出可直接对外或对内发布的功能更新说明。",
+    defaultTemplate: "# 产品功能更新说明\n\n## 版本信息\n\n## 本次更新内容\n\n## 用户价值\n\n## 注意事项\n",
+  },
+  competitorAnalysis: {
+    id: "competitorAnalysis",
+    name: "产品竞品分析",
+    outputMode: "artifact",
+    artifactType: "analysis",
+    preferredFormat: "md",
+    editStrategy: "patch",
+    requiresClarify: true,
+    requiresTemplateConfirm: true,
+    supportsRevision: true,
+    allowWebSearch: true,
+    systemPrompt: "你负责产品竞品分析。根据用户需求识别竞品范围，必要时联网检索并输出结构化分析报告，若缺少检索能力需明确说明。",
+    defaultTemplate: "# 竞品分析报告\n\n## 分析目标\n\n## 竞品列表\n\n## 核心能力对比\n\n## 差异点分析\n\n## 结论与建议\n",
+  },
+  productResearch: {
+    id: "productResearch",
+    name: "产品调研报告",
+    outputMode: "artifact",
+    artifactType: "report",
+    preferredFormat: "md",
+    editStrategy: "patch",
+    requiresClarify: true,
+    requiresTemplateConfirm: true,
+    supportsRevision: true,
+    allowWebSearch: true,
+    systemPrompt: "你负责产品调研报告。根据输入需求明确调研方向，必要时联网检索并输出带来源信息的调研报告，若缺少检索能力需明确说明。",
+    defaultTemplate: "# 产品调研报告\n\n## 调研目标\n\n## 行业/用户洞察\n\n## 关键发现\n\n## 机会点\n\n## 结论与建议\n",
+  },
+  productPresentation: {
+    id: "productPresentation",
+    name: "产品介绍 PPT",
+    outputMode: "artifact",
+    artifactType: "presentation",
+    preferredFormat: "md",
+    editStrategy: "patch",
+    requiresClarify: false,
+    requiresTemplateConfirm: true,
+    supportsRevision: true,
+    allowWebSearch: false,
+    systemPrompt: "你负责生成产品介绍 PPT 内容。请先确认页面结构，再输出逐页可继续编辑的内容。",
+    defaultTemplate: "# 产品介绍 PPT\n\n## 第 1 页：封面\n\n## 第 2 页：产品定位\n\n## 第 3 页：核心功能\n\n## 第 4 页：用户价值\n\n## 第 5 页：总结\n",
+  },
 };
 
 const server = http.createServer(async (req, res) => {
@@ -367,29 +524,90 @@ async function proxyFetch(url, payload) {
 function normalizeChatRequest(body) {
   const workflowId = normalizeWorkflowId(body.workflowId || body.branchId || "");
   const workflow = workflowRegistry[workflowId] || workflowRegistry.general;
-  return {
+  const request = {
     provider: body.provider,
     model: body.model || "",
     conversationId: body.conversationId || "",
     workflowId: workflow.id,
     workflow,
     workflowName: workflow.name,
-    message: body.message || "",
+    message: body.message || body.messageText || "",
     attachments: Array.isArray(body.attachments) ? body.attachments : [],
     history: Array.isArray(body.history) ? body.history : [],
     quotedArtifacts: Array.isArray(body.quotedArtifacts) ? body.quotedArtifacts : [],
     quotedResources: Array.isArray(body.quotedResources) ? body.quotedResources : [],
     targetArtifactId: body.targetArtifactId || "",
     artifactEditIntent: body.artifactEditIntent === "modify" ? "modify" : "none",
+    templateConfirmed: Boolean(body.templateConfirmed),
+    templateSource: body.templateSource || "system_default_template",
     previousResponseId: body.previousResponseId || "",
     branchId: workflow.id,
     branchName: workflow.name,
   };
+  request.stageState = determineWorkflowStage(request);
+  return request;
 }
 
 function normalizeWorkflowId(workflowId) {
   if (!workflowId) return "general";
   return workflowRegistry[workflowId] ? workflowId : "general";
+}
+
+function determineWorkflowStage(request) {
+  if (request.workflow.id === "general") {
+    return { stage: "general_chat", needsUserConfirmation: false };
+  }
+
+  if (
+    request.workflow.supportsRevision
+    && request.artifactEditIntent === "modify"
+    && (request.targetArtifactId || request.quotedArtifacts.length || request.quotedResources.length)
+  ) {
+    return { stage: "revise_existing", needsUserConfirmation: false };
+  }
+
+  if (shouldEnterClarify(request)) {
+    return { stage: "clarify", needsUserConfirmation: false };
+  }
+
+  if (shouldEnterTemplateConfirm(request)) {
+    return { stage: "template_confirm", needsUserConfirmation: true };
+  }
+
+  return { stage: "draft_generate", needsUserConfirmation: false };
+}
+
+function shouldEnterClarify(request) {
+  if (!request.workflow.requiresClarify) return false;
+  const message = String(request.message || "").trim();
+  const hasSupportMaterials = Boolean(
+    message.length >= 18
+    || request.attachments.length
+    || request.quotedArtifacts.length
+    || request.quotedResources.length,
+  );
+
+  if (request.workflow.id === "requirement") {
+    const wantsSummary = /摘要|总结|整理|汇总|输出文档|生成文档|形成摘要/i.test(message);
+    return !wantsSummary;
+  }
+
+  return !hasSupportMaterials;
+}
+
+function shouldEnterTemplateConfirm(request) {
+  if (!request.workflow.requiresTemplateConfirm) return false;
+  if (request.templateConfirmed) return false;
+  if (hasExplicitTemplateInput(request)) return false;
+  return true;
+}
+
+function hasExplicitTemplateInput(request) {
+  if (["uploaded_template", "quoted_template", "user_defined_template"].includes(request.templateSource)) {
+    return true;
+  }
+  const message = String(request.message || "");
+  return /模板|大纲|按以下结构|按这个结构|按此结构|template/i.test(message);
 }
 
 function appendQuotedContext(blocks, request) {
@@ -418,13 +636,25 @@ function finalizeChatResponse(request, providerResult) {
     reply: replyText,
     replyText,
     workflowUsed: request.workflow.id === "general" ? "" : request.workflow.id,
+    stage: request.stageState.stage,
+    needsUserConfirmation: request.stageState.needsUserConfirmation,
+    questions: request.stageState.stage === "clarify" ? extractQuestionCandidates(replyText) : [],
+    templateProposal: request.stageState.stage === "template_confirm"
+      ? {
+          title: `${request.workflow.name}模板建议`,
+          content: replyText,
+          source: request.templateSource || "system_default_template",
+        }
+      : null,
     artifacts,
+    citations: [],
   };
 }
 
 function buildArtifactsFromReply(request, replyText) {
   const normalized = String(replyText || "").trim();
-  const shouldCreateArtifact = request.workflow.outputMode === "artifact" || normalized.length > 600 || /^#|\n#|```|^\|/m.test(normalized);
+  const shouldCreateArtifact = ["draft_generate", "revise_existing", "finalize"].includes(request.stageState.stage)
+    && (request.workflow.outputMode === "artifact" || normalized.length > 600 || /^#|\n#|```|^\|/m.test(normalized));
   if (!shouldCreateArtifact) return [];
 
   const now = new Date().toLocaleString("zh-CN", { hour12: false });
@@ -452,19 +682,30 @@ function buildArtifactTitle(request) {
     requirement: "需求澄清说明",
     prd: "PRD 文档",
     prdReview: "需求评审结果",
+    prototype: "原型 HTML",
     story: "任务拆解文档",
     testCase: "测试用例表",
     testReview: "测试用例评审结果",
     releaseNote: "产品更新说明",
     competitorAnalysis: "竞品分析报告",
     productResearch: "产品调研报告",
+    productPresentation: "产品介绍内容",
     general: "文档",
   };
   return `${request.workflow.name}-${suffixMap[request.workflow.id] || "文档"}`;
 }
 
 function inferArtifactFormat(content) {
+  if (/<!DOCTYPE html>|<html[\s>]/i.test(content)) return "html";
   return content.includes("{") && content.includes("}") ? "json" : "md";
+}
+
+function extractQuestionCandidates(replyText) {
+  return String(replyText || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => /[？?]$/.test(line) || /^\d+[.)、]/.test(line))
+    .slice(0, 5);
 }
 
 function buildDocumentPreview(content, title, createdAt) {
@@ -525,20 +766,36 @@ function buildClientConfig() {
 
 function buildWorkflowInstructions(request) {
   const workflowName = request.workflow?.name || "普通对话";
+  const stage = request.stageState?.stage || "general_chat";
+  const stageInstructionMap = {
+    general_chat: "当前阶段是普通对话。直接理解用户输入并给出有帮助的回复，不要强行套用模板或生成正式产物。",
+    clarify: "当前阶段是需求澄清。先提出最关键的补充问题，不要直接输出最终成品。问题要尽量少，但必须覆盖会影响结果的关键约束。",
+    template_confirm: "当前阶段是模板确认。不要直接输出最终成品。请给出建议模板、大纲或页面结构，等待用户确认后再生成正式内容。",
+    draft_generate: "当前阶段是正式生成。请基于已确认的模板或默认模板，直接输出完整成品。",
+    revise_existing: "当前阶段是基于原文修改。请严格依据引用/目标文档更新完整版本，未提及部分尽量保持不变，不要重写成无关新文档。",
+    finalize: "当前阶段是最终交付。请输出最终可直接使用的成品。",
+  };
   return [
     `你是产品经理工作台中“${workflowName}”工作流的 AI 助手。`,
     request.workflow?.systemPrompt || workflowRegistry.general.systemPrompt,
-    "如果信息不足，先明确指出缺口并给出最小必要补充项。",
-    "优先输出可直接复用、可继续迭代的内容，保持结构清晰。",
+    stageInstructionMap[stage] || stageInstructionMap.general_chat,
+    request.workflow.allowWebSearch
+      ? "该工作流允许联网搜索。若当前执行环境具备搜索能力，请使用可信来源并在结果中保留来源信息；若不具备，请明确说明限制。"
+      : "该工作流默认不依赖联网搜索，优先基于用户提供资料完成任务。",
+    request.workflow.requiresTemplateConfirm
+      ? `若用户未给模板，可参考以下默认模板结构：\n${request.workflow.defaultTemplate || "无"}`
+      : "该工作流不要求额外模板确认。",
     request.artifactEditIntent === "modify" && request.targetArtifactId
       ? "本轮是基于已存在文档的修改任务。除非用户明确要求重写，否则优先在原内容基础上修改，未提及部分尽量保持不变。"
-      : "本轮不是强制文档修改任务，可根据输入直接生成结果。",
+      : "若当前阶段是生成类任务，请优先输出可继续编辑、可直接复用的内容。",
   ].join("\n");
 }
 
 function buildOpenAITextPrompt(request) {
   const textBlocks = [];
   textBlocks.push(`当前工作流：${request.workflow?.name || "普通对话"}`);
+  textBlocks.push(`当前阶段：${request.stageState?.stage || "general_chat"}`);
+  textBlocks.push(`模板来源：${request.templateSource || "system_default_template"}`);
   textBlocks.push(`用户输入：${request.message || "请结合附件继续处理。"} `);
 
   const textAttachments = (request.attachments || []).filter((item) => item.payload?.mode === "text");
@@ -565,6 +822,8 @@ function buildOpenAITextPrompt(request) {
 function buildCodexTextPrompt(request) {
   const blocks = [];
   blocks.push(`当前工作流：${request.workflow?.name || "普通对话"}`);
+  blocks.push(`当前阶段：${request.stageState?.stage || "general_chat"}`);
+  blocks.push(`模板来源：${request.templateSource || "system_default_template"}`);
   blocks.push(`用户输入：${request.message || "请结合附件继续处理。"} `);
 
   if (request.attachments?.length) {

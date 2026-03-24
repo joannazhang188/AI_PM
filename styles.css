@@ -604,6 +604,10 @@ button {
   background: linear-gradient(135deg, #f5ffff 0%, #c9f4f4 100%);
 }
 
+.shortcut-card--sand-khaki {
+  background: linear-gradient(135deg, #fff9f0 0%, #e8d2a8 100%);
+}
+
 .shortcut-card--blue-green {
   background: linear-gradient(135deg, #f5faff 0%, #cfe1ff 100%);
 }
@@ -1160,6 +1164,14 @@ th {
 .doc-content {
   padding: 30px 26px 38px;
   overflow: auto;
+}
+
+.doc-preview-frame {
+  width: 100%;
+  min-height: 720px;
+  border: 1px solid rgba(114, 103, 246, 0.12);
+  border-radius: 18px;
+  background: #fff;
 }
 
 .doc-editor-textarea {

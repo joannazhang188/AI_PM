@@ -4,6 +4,7 @@ const shortcuts = [
   { name: "需求澄清", theme: "sky-lime", icon: "note" },
   { name: "生成PRD", theme: "ice-mint", icon: "doc" },
   { name: "需求评审", theme: "sky-amber", icon: "review" },
+  { name: "生成原型图", theme: "sand-khaki", icon: "prototype" },
   { name: "任务拆解", theme: "blue-green", icon: "task" },
   { name: "生成测试用例", theme: "mint-yellow", icon: "flask" },
   { name: "测试用例评审", theme: "teal-lime", icon: "checklist" },
@@ -447,6 +448,9 @@ function renderDocumentPanel() {
 }
 
 function renderDocPreview(documentItem) {
+  if (documentItem.format === "html") {
+    return `<iframe class="doc-preview-frame" title="${escapeHtml(documentItem.title)}" srcdoc="${escapeHtml(documentItem.content)}"></iframe>`;
+  }
   return buildDocumentPreview(
     documentItem.content,
     documentItem.title,
@@ -776,6 +780,7 @@ async function requestAssistantReply(conversationId, workflowId, text, attachmen
   const conversation = getConversationById(conversationId);
   if (!conversation) return;
   try {
+    const targetArtifactId = resolveTargetArtifactForRequest(workflowId, text, attachments);
     const history = conversation.messages
       .filter((item) => !item.streaming)
       .map((item) => ({
@@ -811,12 +816,15 @@ async function requestAssistantReply(conversationId, workflowId, text, attachmen
           .filter((item) => item.sourceType === "resource")
           .map((item) => ({
             resourceId: item.sourceResourceId,
+            sourceArtifactId: item.sourceArtifactId || "",
             name: item.name,
             content: item.payload?.text || "",
             format: item.fileType || "md",
           })),
-        targetArtifactId: attachments.find((item) => item.sourceType === "document")?.sourceArtifactId || null,
-        artifactEditIntent: attachments.some((item) => item.sourceType === "document") ? "modify" : "none",
+        targetArtifactId: targetArtifactId || null,
+        artifactEditIntent: targetArtifactId ? "modify" : "none",
+        templateConfirmed: isTemplateConfirmationText(text, conversation),
+        templateSource: detectTemplateSourceFromDraft(text, attachments),
         modelMode: state.composerDraft.modelMode,
       }),
     });
@@ -837,11 +845,14 @@ function finishAssistantReply(conversationId, workflowId, responseData) {
   const target = conversation.messages.find((item) => item.streaming);
   if (!target) return;
   target.streaming = false;
+  conversation.lastWorkflowStage = responseData.stage || "";
   const replyText = responseData.replyText || responseData.reply || "";
   const backendArtifacts = Array.isArray(responseData.artifacts) ? responseData.artifacts : [];
   const artifacts = backendArtifacts.length
     ? backendArtifacts.map((item) => upsertDocumentEntity(item))
-    : collectFallbackArtifacts(replyText, workflowId, conversation);
+    : responseData.stage === "template_confirm"
+      ? []
+      : collectFallbackArtifacts(replyText, workflowId, conversation);
   target.content = artifacts.length
     ? [`已生成 ${artifacts[0].title}。`, "你可以在下方卡片中查看、引用、编辑或导出。"]
     : normalizeReplyLines(replyText);
@@ -899,7 +910,14 @@ async function exportDocument(exportType) {
     render();
     return;
   }
-  const blob = new Blob([documentItem.content], { type: "text/plain;charset=utf-8" });
+  const mimeType = exportType === "pdf"
+    ? "application/pdf"
+    : exportType === "doc"
+      ? "application/msword"
+      : documentItem.format === "html"
+        ? "text/html;charset=utf-8"
+        : "text/markdown;charset=utf-8";
+  const blob = new Blob([documentItem.content], { type: mimeType });
   const ext = exportType === "pdf" ? "pdf" : exportType === "doc" ? "doc" : "md";
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -932,6 +950,7 @@ function quoteResourceToComposer(resourceId) {
     kind: isImage ? "image" : "file",
     sourceType: "resource",
     sourceResourceId: resource.id,
+    sourceArtifactId: resource.sourceArtifactId || "",
     fileType: resource.format,
     size: resource.content?.length || 0,
     payload: {
@@ -1193,6 +1212,7 @@ function renderShortcutIcon(icon) {
     chart: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 18.5h14"/><path d="M7 16V10M12 16V6.5M17 16v-3.5"/><path d="m7 8 5-3 5 4"/></svg>`,
     search: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="5.5"/><path d="m15.2 15.2 3.3 3.3"/><path d="M11 8.5v5M8.5 11H13.5"/></svg>`,
     presentation: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="5" width="14" height="10" rx="1.8"/><path d="M12 15v4"/><path d="M9 19h6"/><path d="M8.5 8.5h7M8.5 11.5h4.5"/></svg>`,
+    prototype: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4.5" y="5" width="15" height="14" rx="2.5"/><path d="M8 5v14M4.5 9.5h15"/><path d="M11.5 13h4M11.5 16h2.8"/></svg>`,
   };
   return icons[icon] || icons.note;
 }
@@ -1210,7 +1230,7 @@ function renderModelModeOptions() {
 
 function resolveModelForShortcut(shortcutName) {
   if (state.composerDraft.modelMode === "fast") {
-    return "gpt-4.1-mini";
+    return "gpt-5.4";
   }
   if (state.composerDraft.modelMode === "quality") {
     return "gpt-5.2";
@@ -1218,6 +1238,7 @@ function resolveModelForShortcut(shortcutName) {
   const qualityFirstShortcuts = new Set([
     "生成PRD",
     "需求评审",
+    "生成原型图",
     "生成测试用例",
     "测试用例评审",
     "产品更新说明",
@@ -1225,7 +1246,7 @@ function resolveModelForShortcut(shortcutName) {
     "产品调研报告",
     "产品介绍 PPT",
   ]);
-  return qualityFirstShortcuts.has(shortcutName) ? "gpt-5.2" : "gpt-4.1-mini";
+  return qualityFirstShortcuts.has(shortcutName) ? "gpt-5.2" : "gpt-5.4";
 }
 
 function getWorkflowIdByShortcut(shortcutName) {
@@ -1233,13 +1254,14 @@ function getWorkflowIdByShortcut(shortcutName) {
     "需求澄清": "requirement",
     "生成PRD": "prd",
     "需求评审": "prdReview",
+    "生成原型图": "prototype",
     "任务拆解": "story",
     "生成测试用例": "testCase",
     "测试用例评审": "testReview",
     "产品更新说明": "releaseNote",
     "产品竞品分析": "competitorAnalysis",
     "产品调研报告": "productResearch",
-    "产品介绍 PPT": "productResearch",
+    "产品介绍 PPT": "productPresentation",
   };
   return map[shortcutName] || "";
 }
@@ -1249,12 +1271,14 @@ function getShortcutByWorkflowId(workflowId) {
     requirement: "需求澄清",
     prd: "生成PRD",
     prdReview: "需求评审",
+    prototype: "生成原型图",
     story: "任务拆解",
     testCase: "生成测试用例",
     testReview: "测试用例评审",
     releaseNote: "产品更新说明",
     competitorAnalysis: "产品竞品分析",
     productResearch: "产品调研报告",
+    productPresentation: "产品介绍 PPT",
   };
   return map[workflowId] || "";
 }
@@ -1345,7 +1369,7 @@ function extractArtifactFromReply(replyText, shortcutName, conversation) {
     sourceMessageId: conversation.messages.findLast((item) => item.role === "assistant")?.id || "",
     workflowId: normalizeWorkflowId(conversation.workflowId),
     title: inferDocumentTitle(shortcutName, conversation.title),
-    format: normalized.includes("{") && normalized.includes("}") ? "json" : "md",
+    format: /<!DOCTYPE html>|<html[\s>]/i.test(normalized) ? "html" : normalized.includes("{") && normalized.includes("}") ? "json" : "md",
     content: normalized,
     createdAt: new Date().toLocaleString("zh-CN", { hour12: false }),
     updatedAt: new Date().toLocaleString("zh-CN", { hour12: false }),
@@ -1358,6 +1382,7 @@ function inferDocumentTitle(shortcutName, conversationTitle) {
     "需求澄清": "需求澄清说明",
     "生成PRD": "PRD 文档",
     "需求评审": "需求评审结果",
+    "生成原型图": "原型 HTML",
     "任务拆解": "任务拆解文档",
     "生成测试用例": "测试用例表",
     "测试用例评审": "测试用例评审结果",
@@ -1567,7 +1592,9 @@ async function copyCurrentDocument() {
   const copyText = state.docIsEditing
     ? state.docEditorText
     : state.docMode === "preview"
-      ? getDocumentPreviewText(documentItem)
+      ? documentItem.format === "html"
+        ? documentItem.content
+        : getDocumentPreviewText(documentItem)
       : documentItem.content;
   if (!navigator.clipboard?.writeText) {
     window.alert("当前浏览器暂不支持复制。");
@@ -1614,6 +1641,49 @@ function removeComposerResourceReferences(resourceId) {
   const before = state.composerDraft.attachments.length;
   state.composerDraft.attachments = state.composerDraft.attachments.filter((item) => item.sourceResourceId !== resourceId);
   return before - state.composerDraft.attachments.length;
+}
+
+function isTemplateConfirmationText(text, conversation) {
+  if (conversation?.lastWorkflowStage !== "template_confirm") return false;
+  const normalized = String(text || "").trim();
+  if (!normalized) return false;
+  return /确认|按这个|按此|照这个|照此|用这个|用此|继续生成|开始生成|生成吧|就按|没问题|可以|OK|ok/i.test(normalized);
+}
+
+function detectTemplateSourceFromDraft(text, attachments) {
+  const normalizedText = String(text || "");
+  if (attachments.some((item) => !item.sourceType && /(模板|template|大纲)/i.test(item.name || ""))) {
+    return "uploaded_template";
+  }
+  if (attachments.some((item) => ["document", "resource"].includes(item.sourceType) && /(模板|template|大纲)/i.test(item.name || ""))) {
+    return "quoted_template";
+  }
+  if (/模板|按以下结构|按这个结构|以下大纲|以下模板/i.test(normalizedText)) {
+    return "user_defined_template";
+  }
+  return "system_default_template";
+}
+
+function isRevisionIntentText(text) {
+  return /修改|改成|改为|调整|补充|完善|修订|优化|更新|在原文基础上|基于.*修改/i.test(String(text || ""));
+}
+
+function resolveTargetArtifactForRequest(workflowId, text, attachments) {
+  if (!workflowId || !isRevisionIntentText(text)) return "";
+  const quotedDocument = attachments.find((item) => {
+    if (item.sourceType !== "document" || !item.sourceArtifactId) return false;
+    const documentItem = getDocumentById(item.sourceArtifactId);
+    return documentItem?.workflowId === workflowId;
+  });
+  if (quotedDocument?.sourceArtifactId) {
+    return quotedDocument.sourceArtifactId;
+  }
+  const quotedResource = attachments.find((item) => {
+    if (item.sourceType !== "resource" || !item.sourceArtifactId) return false;
+    const resource = state.resources.find((record) => record.id === item.sourceResourceId);
+    return resource?.workflowId === workflowId;
+  });
+  return quotedResource?.sourceArtifactId || "";
 }
 
 function showToast(message) {
