@@ -593,43 +593,43 @@ button {
 }
 
 .shortcut-card--sky-lime {
-  background: linear-gradient(135deg, #dff8ff 0%, #dff5b6 100%);
+  background: linear-gradient(135deg, #ffffff 0%, #eceef3 100%);
 }
 
 .shortcut-card--ice-mint {
-  background: linear-gradient(135deg, #d9f2ff 0%, #d7f7d9 100%);
+  background: linear-gradient(135deg, #fffdf2 0%, #fff0b8 100%);
 }
 
 .shortcut-card--sky-amber {
-  background: linear-gradient(135deg, #dff5ff 0%, #e5f8b7 100%);
+  background: linear-gradient(135deg, #f5ffff 0%, #c9f4f4 100%);
 }
 
 .shortcut-card--blue-green {
-  background: linear-gradient(135deg, #daf2ff 0%, #cef5c7 100%);
+  background: linear-gradient(135deg, #f5faff 0%, #cfe1ff 100%);
 }
 
 .shortcut-card--mint-yellow {
-  background: linear-gradient(135deg, #def8ff 0%, #e8f6b8 100%);
+  background: linear-gradient(135deg, #f7fff6 0%, #d7f3cc 100%);
 }
 
 .shortcut-card--teal-lime {
-  background: linear-gradient(135deg, #ddf6ff 0%, #d8f4b5 100%);
+  background: linear-gradient(135deg, #fff7fb 0%, #ffd4ea 100%);
 }
 
 .shortcut-card--cyan-grass {
-  background: linear-gradient(135deg, #dbf7ff 0%, #dff3b7 100%);
+  background: linear-gradient(135deg, #fff9f3 0%, #ffd9b3 100%);
 }
 
 .shortcut-card--blue-leaf {
-  background: linear-gradient(135deg, #d8f1ff 0%, #d8f3bf 100%);
+  background: linear-gradient(135deg, #fff5f5 0%, #ffcfcf 100%);
 }
 
 .shortcut-card--ocean-lime {
-  background: linear-gradient(135deg, #dbf6ff 0%, #d9f3b3 100%);
+  background: linear-gradient(135deg, #fbf7ff 0%, #e1d0ff 100%);
 }
 
 .shortcut-card--aqua-sun {
-  background: linear-gradient(135deg, #dff7ff 0%, #e4f4b6 100%);
+  background: linear-gradient(135deg, #fbf8f3 0%, #e3d1bf 100%);
 }
 
 .conversation-view {
@@ -656,11 +656,12 @@ button {
 }
 
 .conversation-view .composer-footer {
+  flex-wrap: nowrap;
   align-items: center;
 }
 
 .conversation-view .composer-footer__left {
-  flex: 1 1 680px;
+  flex: 1 1 auto;
   flex-wrap: nowrap;
   overflow-x: auto;
   padding-bottom: 2px;
@@ -1261,6 +1262,10 @@ th {
   .conversation-view .composer-footer__left {
     flex-wrap: wrap;
     overflow: visible;
+  }
+
+  .conversation-view .composer-footer {
+    flex-wrap: wrap;
   }
 
   .composer-footer__right {
