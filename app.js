@@ -398,6 +398,7 @@ function renderMessageReferences(references) {
             data-reference-type="${reference.referenceType}"
             data-reference-id="${reference.referenceId}"
             title="${missing ? "该文档已不存在" : "引用到对话框"}"
+            aria-disabled="${missing ? "true" : "false"}"
           >
             <span class="message-reference-chip__name">${escapeHtml(reference.name)}</span>
             ${missing ? `<span class="message-reference-chip__badge">已失效</span>` : ""}
@@ -451,11 +452,19 @@ function renderDocPreview(documentItem) {
     documentItem.title,
     documentItem.createdAt,
   ).map((block) => {
-    if (block.type === "h2") return `<h2>${block.text}</h2>`;
-    if (block.type === "meta") return `<div class="doc-meta">${block.text}</div>`;
-    if (block.type === "h3") return `<h3>${block.text}</h3>`;
-    return `<p>${block.text}</p>`;
+    if (block.type === "h2") return `<h2>${escapeHtml(block.text)}</h2>`;
+    if (block.type === "meta") return `<div class="doc-meta">${escapeHtml(block.text)}</div>`;
+    if (block.type === "h3") return `<h3>${escapeHtml(block.text)}</h3>`;
+    return `<p>${escapeHtml(block.text)}</p>`;
   }).join("");
+}
+
+function getDocumentPreviewText(documentItem) {
+  return buildDocumentPreview(
+    documentItem.content,
+    documentItem.title,
+    documentItem.createdAt,
+  ).map((block) => block.text).filter(Boolean).join("\n");
 }
 
 function renderComposer(withSelect) {
@@ -1555,7 +1564,11 @@ async function saveDocumentEdits() {
 async function copyCurrentDocument() {
   const documentItem = getDocumentById(state.activeDocumentId);
   if (!documentItem) return;
-  const copyText = state.docIsEditing ? state.docEditorText : documentItem.content;
+  const copyText = state.docIsEditing
+    ? state.docEditorText
+    : state.docMode === "preview"
+      ? getDocumentPreviewText(documentItem)
+      : documentItem.content;
   if (!navigator.clipboard?.writeText) {
     window.alert("当前浏览器暂不支持复制。");
     return;
@@ -1614,6 +1627,7 @@ function showToast(message) {
   requestAnimationFrame(() => toast.classList.add("is-visible"));
   window.setTimeout(() => {
     toast.classList.remove("is-visible");
+    toast.classList.add("is-leaving");
     window.setTimeout(() => toast.remove(), 180);
   }, 1800);
 }
