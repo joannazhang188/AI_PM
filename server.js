@@ -8,6 +8,20 @@ const { URL } = require("node:url");
 const env = loadEnv(path.join(__dirname, ".env"));
 const PORT = Number(env.PORT || 4173);
 const MAX_BODY_SIZE = 30 * 1024 * 1024;
+const artifactStore = new Map();
+const resourceStore = new Map();
+const workflowRegistry = {
+  general: { id: "general", name: "普通对话", outputMode: "chat", artifactType: "generic", preferredFormat: "md", editStrategy: "rewrite", systemPrompt: "你是产品经理工作台中的通用 AI 助手。只围绕用户当前输入、引用内容和附件进行理解与输出，不要默认套用任何快捷功能工作流。" },
+  requirement: { id: "requirement", name: "需求澄清", outputMode: "artifact", artifactType: "clarification", preferredFormat: "md", editStrategy: "patch", systemPrompt: "你负责需求澄清。输出重点是需求目标、边界、缺口和待确认项。" },
+  prd: { id: "prd", name: "生成PRD", outputMode: "artifact", artifactType: "prd", preferredFormat: "md", editStrategy: "patch", systemPrompt: "你负责生成 PRD 文档。优先输出结构化、可继续编辑的文档内容。" },
+  prdReview: { id: "prdReview", name: "需求评审", outputMode: "artifact", artifactType: "review", preferredFormat: "md", editStrategy: "patch", systemPrompt: "你负责需求评审。输出评审意见、风险和修改建议。" },
+  story: { id: "story", name: "任务拆解", outputMode: "artifact", artifactType: "story", preferredFormat: "md", editStrategy: "patch", systemPrompt: "你负责任务拆解。输出结构化拆解结果。" },
+  testCase: { id: "testCase", name: "生成测试用例", outputMode: "artifact", artifactType: "testcase", preferredFormat: "md", editStrategy: "patch", systemPrompt: "你负责生成测试用例。输出可继续编辑的测试用例内容。" },
+  testReview: { id: "testReview", name: "测试用例评审", outputMode: "artifact", artifactType: "review", preferredFormat: "md", editStrategy: "patch", systemPrompt: "你负责测试用例评审。输出评审意见和修订建议。" },
+  releaseNote: { id: "releaseNote", name: "产品更新说明", outputMode: "artifact", artifactType: "release", preferredFormat: "md", editStrategy: "patch", systemPrompt: "你负责产品更新说明。输出可发布的更新说明文本。" },
+  competitorAnalysis: { id: "competitorAnalysis", name: "产品竞品分析", outputMode: "artifact", artifactType: "analysis", preferredFormat: "md", editStrategy: "patch", systemPrompt: "你负责产品竞品分析。输出结构化分析报告。" },
+  productResearch: { id: "productResearch", name: "产品调研报告", outputMode: "artifact", artifactType: "report", preferredFormat: "md", editStrategy: "patch", systemPrompt: "你负责产品调研报告。输出可继续编辑的调研内容。" },
+};
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -30,6 +44,19 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, result);
     }
 
+    if (req.method === "PATCH" && url.pathname.startsWith("/api/artifacts/")) {
+      const artifactId = decodeURIComponent(url.pathname.replace("/api/artifacts/", ""));
+      const body = await readJsonBody(req);
+      const result = updateArtifact(artifactId, body);
+      return sendJson(res, 200, { artifact: result });
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/resources") {
+      const body = await readJsonBody(req);
+      const result = createResourceFromArtifact(body);
+      return sendJson(res, 200, { resource: result });
+    }
+
     if (req.method === "GET" || req.method === "HEAD") {
       return serveStatic(url.pathname, res, req.method === "HEAD");
     }
@@ -47,24 +74,22 @@ server.listen(PORT, () => {
 
 async function handleChat(body) {
   validateChatBody(body);
+  const request = normalizeChatRequest(body);
+  let providerResult;
 
-  if (body.provider === "codexCli") {
-    return callCodexCli(body);
+  if (request.provider === "codexCli") {
+    providerResult = await callCodexCli(request);
+  } else if (request.provider === "codexDesktop") {
+    providerResult = await callCodexDesktop(request);
+  } else if (request.provider === "openai") {
+    providerResult = await callOpenAI(request);
+  } else if (request.provider === "codexProxy") {
+    providerResult = await callCodexProxy(request);
+  } else {
+    throw createError(400, "Unsupported provider");
   }
 
-  if (body.provider === "codexDesktop") {
-    return callCodexDesktop(body);
-  }
-
-  if (body.provider === "openai") {
-    return callOpenAI(body);
-  }
-
-  if (body.provider === "codexProxy") {
-    return callCodexProxy(body);
-  }
-
-  throw createError(400, "Unsupported provider");
+  return finalizeChatResponse(request, providerResult);
 }
 
 async function callCodexCli(body) {
@@ -79,7 +104,7 @@ async function callCodexCli(body) {
 
   try {
     const imageFiles = materializeCodexCliImages(tempDir, body.attachments || []);
-    const prompt = buildCodexCliPrompt(body.branchName, body.message, body.attachments, body.history);
+    const prompt = buildCodexCliPrompt(body, body.history);
     const args = [
       "exec",
       "--skip-git-repo-check",
@@ -104,7 +129,7 @@ async function callCodexCli(body) {
       provider: "codexCli",
       model,
       previousResponseId: "",
-      reply,
+      replyText: reply,
     };
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -120,7 +145,7 @@ async function callOpenAI(body) {
   const content = [
     {
       type: "input_text",
-      text: buildOpenAITextPrompt(body.branchName, body.message, body.attachments),
+      text: buildOpenAITextPrompt(body),
     },
   ];
 
@@ -141,7 +166,7 @@ async function callOpenAI(body) {
 
   const payload = {
     model,
-    instructions: buildBranchInstructions(body.branchName),
+    instructions: buildWorkflowInstructions(body),
     input: [
       {
         role: "user",
@@ -172,7 +197,7 @@ async function callOpenAI(body) {
     provider: "openai",
     model,
     previousResponseId: data.id,
-    reply: extractResponseText(data),
+    replyText: extractResponseText(data),
   };
 }
 
@@ -188,14 +213,14 @@ async function callCodexProxy(body) {
   if (style === "responses") {
     const payload = {
       model,
-      instructions: buildBranchInstructions(body.branchName),
+      instructions: buildWorkflowInstructions(body),
       input: [
         {
           role: "user",
           content: [
             {
               type: "input_text",
-              text: buildCodexTextPrompt(body.branchName, body.message, body.attachments),
+              text: buildCodexTextPrompt(body),
             },
           ],
         },
@@ -207,19 +232,19 @@ async function callCodexProxy(body) {
       provider: "codex",
       model,
       previousResponseId: response.id || "",
-      reply: extractResponseText(response),
+      replyText: extractResponseText(response),
     };
   }
 
   const messages = [
     {
       role: "system",
-      content: buildBranchInstructions(body.branchName),
+      content: buildWorkflowInstructions(body),
     },
     ...body.history,
     {
       role: "user",
-      content: buildCodexTextPrompt(body.branchName, body.message, body.attachments),
+      content: buildCodexTextPrompt(body),
     },
   ];
 
@@ -238,7 +263,7 @@ async function callCodexProxy(body) {
     provider: "codexProxy",
     model,
     previousResponseId: "",
-    reply: normalizeChatContent(reply),
+    replyText: normalizeChatContent(reply),
   };
 }
 
@@ -262,7 +287,7 @@ async function callCodexDesktop(body) {
   const currentContent = [
     {
       type: "input_text",
-      text: buildOpenAITextPrompt(body.branchName, body.message, body.attachments),
+      text: buildOpenAITextPrompt(body),
     },
   ];
 
@@ -290,7 +315,7 @@ async function callCodexDesktop(body) {
     model,
     store: false,
     stream: true,
-    instructions: buildBranchInstructions(body.branchName),
+    instructions: buildWorkflowInstructions(body),
     input,
   }
 
@@ -313,7 +338,7 @@ async function callCodexDesktop(body) {
     provider: "codexDesktop",
     model,
     previousResponseId: parsed.previousResponseId,
-    reply: parsed.reply,
+    replyText: parsed.reply,
   };
 }
 
@@ -337,6 +362,129 @@ async function proxyFetch(url, payload) {
     throw createError(response.status, data.error?.message || data.message || "Codex Proxy 请求失败");
   }
   return data;
+}
+
+function normalizeChatRequest(body) {
+  const workflowId = normalizeWorkflowId(body.workflowId || body.branchId || "");
+  const workflow = workflowRegistry[workflowId] || workflowRegistry.general;
+  return {
+    provider: body.provider,
+    model: body.model || "",
+    conversationId: body.conversationId || "",
+    workflowId: workflow.id,
+    workflow,
+    workflowName: workflow.name,
+    message: body.message || "",
+    attachments: Array.isArray(body.attachments) ? body.attachments : [],
+    history: Array.isArray(body.history) ? body.history : [],
+    quotedArtifacts: Array.isArray(body.quotedArtifacts) ? body.quotedArtifacts : [],
+    quotedResources: Array.isArray(body.quotedResources) ? body.quotedResources : [],
+    targetArtifactId: body.targetArtifactId || "",
+    artifactEditIntent: body.artifactEditIntent === "modify" ? "modify" : "none",
+    previousResponseId: body.previousResponseId || "",
+    branchId: workflow.id,
+    branchName: workflow.name,
+  };
+}
+
+function normalizeWorkflowId(workflowId) {
+  if (!workflowId) return "general";
+  return workflowRegistry[workflowId] ? workflowId : "general";
+}
+
+function appendQuotedContext(blocks, request) {
+  if (request.quotedArtifacts?.length) {
+    blocks.push("本轮引用的会话文档：");
+    request.quotedArtifacts.forEach((item, index) => {
+      blocks.push(`${index + 1}. ${item.title || item.artifactId}\n${item.content || ""}`);
+    });
+  }
+
+  if (request.quotedResources?.length) {
+    blocks.push("本轮引用的资源库内容：");
+    request.quotedResources.forEach((item, index) => {
+      blocks.push(`${index + 1}. ${item.name || item.resourceId}\n${item.content || ""}`);
+    });
+  }
+}
+
+function finalizeChatResponse(request, providerResult) {
+  const replyText = providerResult.replyText || providerResult.reply || "模型返回了空结果。";
+  const artifacts = buildArtifactsFromReply(request, replyText);
+  return {
+    provider: providerResult.provider,
+    model: providerResult.model,
+    previousResponseId: providerResult.previousResponseId || "",
+    reply: replyText,
+    replyText,
+    workflowUsed: request.workflow.id === "general" ? "" : request.workflow.id,
+    artifacts,
+  };
+}
+
+function buildArtifactsFromReply(request, replyText) {
+  const normalized = String(replyText || "").trim();
+  const shouldCreateArtifact = request.workflow.outputMode === "artifact" || normalized.length > 600 || /^#|\n#|```|^\|/m.test(normalized);
+  if (!shouldCreateArtifact) return [];
+
+  const now = new Date().toLocaleString("zh-CN", { hour12: false });
+  const artifact = {
+    id: createId("artifact"),
+    conversationId: request.conversationId || "",
+    sourceMessageId: "",
+    workflowId: request.workflow.id === "general" ? "" : request.workflow.id,
+    kind: "document",
+    title: buildArtifactTitle(request),
+    format: request.workflow.preferredFormat || inferArtifactFormat(normalized),
+    content: normalized,
+    preview: buildDocumentPreview(normalized, buildArtifactTitle(request), now),
+    createdAt: now,
+    updatedAt: now,
+    version: 1,
+    isEdited: false,
+  };
+  artifactStore.set(artifact.id, artifact);
+  return [artifact];
+}
+
+function buildArtifactTitle(request) {
+  const suffixMap = {
+    requirement: "需求澄清说明",
+    prd: "PRD 文档",
+    prdReview: "需求评审结果",
+    story: "任务拆解文档",
+    testCase: "测试用例表",
+    testReview: "测试用例评审结果",
+    releaseNote: "产品更新说明",
+    competitorAnalysis: "竞品分析报告",
+    productResearch: "产品调研报告",
+    general: "文档",
+  };
+  return `${request.workflow.name}-${suffixMap[request.workflow.id] || "文档"}`;
+}
+
+function inferArtifactFormat(content) {
+  return content.includes("{") && content.includes("}") ? "json" : "md";
+}
+
+function buildDocumentPreview(content, title, createdAt) {
+  const lines = String(content || "").split("\n").filter(Boolean);
+  const preview = [
+    { type: "h2", text: title || "未命名文档" },
+    { type: "meta", text: createdAt || "" },
+  ];
+  lines.forEach((line) => {
+    if (line.startsWith("# ")) return;
+    if (line.startsWith("## ")) {
+      preview.push({ type: "h3", text: line.replace(/^## /, "") });
+      return;
+    }
+    preview.push({ type: "p", text: line });
+  });
+  if (preview.length === 2) {
+    preview.push({ type: "p", text: "暂无内容" });
+  }
+  return preview;
 }
 
 function buildClientConfig() {
@@ -366,21 +514,25 @@ function buildClientConfig() {
   };
 }
 
-function buildBranchInstructions(branchName) {
+function buildWorkflowInstructions(request) {
+  const workflowName = request.workflow?.name || "普通对话";
   return [
-    `你是产品经理工作台中“${branchName}”支线的 AI 助手。`,
-    "你要围绕当前支线回答，不要越过支线边界自动推进到其他阶段。",
+    `你是产品经理工作台中“${workflowName}”工作流的 AI 助手。`,
+    request.workflow?.systemPrompt || workflowRegistry.general.systemPrompt,
     "如果信息不足，先明确指出缺口并给出最小必要补充项。",
     "优先输出可直接复用、可继续迭代的内容，保持结构清晰。",
+    request.artifactEditIntent === "modify" && request.targetArtifactId
+      ? "本轮是基于已存在文档的修改任务。除非用户明确要求重写，否则优先在原内容基础上修改，未提及部分尽量保持不变。"
+      : "本轮不是强制文档修改任务，可根据输入直接生成结果。",
   ].join("\n");
 }
 
-function buildOpenAITextPrompt(branchName, message, attachments) {
+function buildOpenAITextPrompt(request) {
   const textBlocks = [];
-  textBlocks.push(`当前支线：${branchName}`);
-  textBlocks.push(`用户输入：${message || "请结合附件继续处理。"} `);
+  textBlocks.push(`当前工作流：${request.workflow?.name || "普通对话"}`);
+  textBlocks.push(`用户输入：${request.message || "请结合附件继续处理。"} `);
 
-  const textAttachments = (attachments || []).filter((item) => item.payload?.mode === "text");
+  const textAttachments = (request.attachments || []).filter((item) => item.payload?.mode === "text");
   if (textAttachments.length) {
     textBlocks.push("以下是用户上传的文本型文件内容：");
     textAttachments.forEach((item, index) => {
@@ -388,7 +540,7 @@ function buildOpenAITextPrompt(branchName, message, attachments) {
     });
   }
 
-  const otherAttachments = (attachments || []).filter((item) => item.payload?.mode !== "text");
+  const otherAttachments = (request.attachments || []).filter((item) => item.payload?.mode !== "text");
   if (otherAttachments.length) {
     textBlocks.push("本轮同时附带以下非文本附件：");
     otherAttachments.forEach((item, index) => {
@@ -396,17 +548,19 @@ function buildOpenAITextPrompt(branchName, message, attachments) {
     });
   }
 
+  appendQuotedContext(textBlocks, request);
+
   return textBlocks.join("\n\n");
 }
 
-function buildCodexTextPrompt(branchName, message, attachments) {
+function buildCodexTextPrompt(request) {
   const blocks = [];
-  blocks.push(`当前支线：${branchName}`);
-  blocks.push(`用户输入：${message || "请结合附件继续处理。"} `);
+  blocks.push(`当前工作流：${request.workflow?.name || "普通对话"}`);
+  blocks.push(`用户输入：${request.message || "请结合附件继续处理。"} `);
 
-  if (attachments?.length) {
+  if (request.attachments?.length) {
     blocks.push("附件信息：");
-    attachments.forEach((item, index) => {
+    request.attachments.forEach((item, index) => {
       blocks.push(`${index + 1}. ${item.kind} - ${item.name} - ${item.meta}`);
       if (item.payload?.mode === "text" && item.payload.text) {
         blocks.push(`文件内容摘要：\n${item.payload.text}`);
@@ -414,21 +568,23 @@ function buildCodexTextPrompt(branchName, message, attachments) {
     });
   }
 
+  appendQuotedContext(blocks, request);
+
   return blocks.join("\n\n");
 }
 
-function buildCodexCliPrompt(branchName, message, attachments, history) {
-  const blocks = [buildBranchInstructions(branchName)];
+function buildCodexCliPrompt(request, history) {
+  const blocks = [buildWorkflowInstructions(request)];
 
   if (history?.length) {
-    blocks.push("以下是同一支线的历史对话，请延续上下文：");
+    blocks.push("以下是同一工作流下的历史对话，请延续上下文：");
     history.forEach((item, index) => {
       blocks.push(`${index + 1}. ${item.role === "assistant" ? "助手" : "用户"}：${item.content}`);
     });
   }
 
   blocks.push("以下是本轮用户输入与附件信息：");
-  blocks.push(buildCodexTextPrompt(branchName, message, attachments));
+  blocks.push(buildCodexTextPrompt(request));
   blocks.push("请直接给出当前轮次的结果，不要重复转述全部历史。");
 
   return blocks.join("\n\n");
@@ -463,13 +619,50 @@ function normalizeChatContent(content) {
   return "代理返回了无法解析的内容。";
 }
 
+function updateArtifact(artifactId, body) {
+  const current = artifactStore.get(artifactId);
+  if (!current) {
+    throw createError(404, "未找到对应文档");
+  }
+  const next = {
+    ...current,
+    title: body.title || current.title,
+    format: body.format || current.format,
+    content: typeof body.content === "string" ? body.content : current.content,
+    updatedAt: new Date().toLocaleString("zh-CN", { hour12: false }),
+    version: Number(current.version || 1) + 1,
+    isEdited: true,
+  };
+  next.preview = buildDocumentPreview(next.content, next.title, next.createdAt);
+  artifactStore.set(artifactId, next);
+  return next;
+}
+
+function createResourceFromArtifact(body) {
+  const artifact = artifactStore.get(body.artifactId);
+  if (!artifact) {
+    throw createError(404, "未找到对应 artifact");
+  }
+  const record = {
+    id: createId("resource"),
+    artifactId: artifact.id,
+    sourceArtifactId: artifact.id,
+    workflowId: artifact.workflowId || body.workflowId || "",
+    name: body.name || artifact.title,
+    type: workflowRegistry[artifact.workflowId]?.name || body.workflowId || "普通对话",
+    format: artifact.format,
+    content: artifact.content,
+    description: body.description || "未命名对话",
+    createdAt: new Date().toLocaleString("zh-CN", { hour12: false }),
+    updatedAt: new Date().toLocaleString("zh-CN", { hour12: false }),
+  };
+  resourceStore.set(record.id, record);
+  return record;
+}
+
 function validateChatBody(body) {
   if (!body || typeof body !== "object") {
     throw createError(400, "请求体无效");
-  }
-
-  if (!body.branchId || !body.branchName) {
-    throw createError(400, "缺少支线信息");
   }
 
   if (!["openai", "codexProxy", "codexDesktop", "codexCli"].includes(body.provider)) {
@@ -483,6 +676,10 @@ function validateChatBody(body) {
   if (!Array.isArray(body.attachments)) {
     body.attachments = [];
   }
+}
+
+function createId(prefix) {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function serveStatic(requestPath, res, headOnly = false) {

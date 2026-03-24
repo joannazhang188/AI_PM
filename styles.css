@@ -378,18 +378,28 @@ button {
 }
 
 .composer-inner {
-  min-height: 118px;
+  min-height: 144px;
+  display: grid;
+  grid-template-rows: auto minmax(84px, auto) auto;
+  gap: 12px;
   border-radius: 18px;
   border: 1px solid var(--border);
   background: #fff;
-  padding: 14px 14px 8px;
+  padding: 14px;
 }
 
-.attachment-strip {
+.composer-header {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 10px;
+  min-height: 30px;
+  max-height: 72px;
+  overflow: auto;
+}
+
+.composer-header.is-empty {
+  min-height: 0;
+  max-height: 0;
 }
 
 .attachment-chip {
@@ -413,6 +423,16 @@ button {
   color: #2c5478;
 }
 
+.attachment-chip--document {
+  background: rgba(80, 157, 245, 0.11);
+  color: #29578f;
+}
+
+.attachment-chip--resource {
+  background: rgba(103, 188, 126, 0.12);
+  color: #2f7042;
+}
+
 .attachment-chip button {
   border: 0;
   background: transparent;
@@ -420,9 +440,14 @@ button {
   padding: 0;
 }
 
+.composer-body {
+  min-height: 84px;
+}
+
 .composer-textarea {
   width: 100%;
-  min-height: 74px;
+  min-height: 84px;
+  height: 100%;
   border: 0;
   resize: none;
   outline: none;
@@ -435,17 +460,27 @@ button {
 
 .composer-footer {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
-  gap: 14px;
-  margin-top: 8px;
+  gap: 16px;
+  flex-wrap: wrap;
 }
 
-.tool-row,
-.send-row {
+.composer-footer__left,
+.composer-footer__right {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+.composer-footer__left {
+  flex: 1 1 520px;
+  min-width: 0;
+}
+
+.composer-footer__right {
+  flex: 0 0 auto;
 }
 
 .voice-button {
@@ -466,6 +501,7 @@ button {
 .tool-select {
   border-radius: 0;
   width: 160px;
+  flex: 0 0 auto;
 }
 
 .tool-select--model {
@@ -717,19 +753,37 @@ button {
 }
 
 .document-card {
-  width: 264px;
+  width: min(320px, 100%);
   min-height: 60px;
   border-radius: 14px;
   border: 1px solid var(--border-strong);
   background: #fff;
   display: flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: space-between;
-  padding: 0 14px;
+  gap: 12px;
+  padding: 10px 14px;
+}
+
+.document-card__body {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  display: grid;
+  gap: 6px;
+  padding: 0;
+}
+
+.document-card__meta {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .document-card__title {
   font-size: 14px;
+  font-weight: 700;
 }
 
 .doc-quote {
@@ -738,12 +792,15 @@ button {
   border: 1px solid #3a79dd;
   background: #fff;
   color: #3a79dd;
+  align-self: center;
 }
 
 .chat-input-dock {
-  padding: 18px 16px 16px;
+  padding: 14px 16px 16px;
   border-top: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.58);
+  position: sticky;
+  bottom: 0;
 }
 
 .library-view {
@@ -852,6 +909,15 @@ th {
   position: relative;
 }
 
+.doc-text-button {
+  min-width: 64px;
+  height: 30px;
+  border: 1px solid rgba(96, 102, 255, 0.24);
+  border-radius: 10px;
+  background: rgba(97, 103, 255, 0.1);
+  color: #575cff;
+}
+
 .doc-export-menu {
   position: absolute;
   top: 36px;
@@ -893,6 +959,18 @@ th {
 .doc-content {
   padding: 24px 20px 34px;
   overflow: auto;
+}
+
+.doc-editor-textarea {
+  width: 100%;
+  min-height: 520px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 16px;
+  resize: vertical;
+  outline: none;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  line-height: 1.75;
 }
 
 .doc-meta {
@@ -973,5 +1051,14 @@ th {
 
   .shortcut-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .composer-footer__left,
+  .composer-footer__right {
+    width: 100%;
+  }
+
+  .composer-footer__right {
+    justify-content: flex-end;
   }
 }

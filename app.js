@@ -13,21 +13,19 @@ const shortcuts = [
   { name: "产品介绍 PPT", theme: "aqua-sun", icon: "presentation" },
 ];
 
-const documents = {
+const defaultDocuments = {
   doc_prd_preview: {
     id: "doc_prd_preview",
+    conversationId: "conv-d",
+    sourceMessageId: "msg-2",
+    workflowId: "prdReview",
     title: "文档标题",
     createdAt: "文档生成时间",
+    updatedAt: "文档生成时间",
+    version: 1,
+    isEdited: false,
     format: "md",
-    preview: [
-      { type: "h2", text: "文档标题" },
-      { type: "meta", text: "文档生成时间" },
-      { type: "h3", text: "文档正文标题" },
-      ...Array.from({ length: 8 }, () => ({ type: "p", text: "这是一段文档内容" })),
-      { type: "h3", text: "md 文档" },
-      ...Array.from({ length: 18 }, () => ({ type: "p", text: "这是一段文档内容" })),
-    ],
-    code: `# 文档标题\n\n## 文档正文标题\n\n这是一段文档内容\n这是一段文档内容\n这是一段文档内容`,
+    content: `# 文档标题\n\n## 文档正文标题\n\n这是一段文档内容\n这是一段文档内容\n这是一段文档内容`,
   },
 };
 
@@ -43,15 +41,20 @@ const defaultState = {
   documentOpen: false,
   activeDocumentId: "doc_prd_preview",
   docMode: "preview",
-  composerText: "",
-  composerMode: "",
-  modelMode: "auto",
+  docIsEditing: false,
+  docEditorText: "",
+  composerDraft: {
+    text: "",
+    selectedWorkflowId: "",
+    attachments: [],
+    modelMode: "auto",
+  },
   draftProjectId: null,
-  attachments: [],
   isGenerating: false,
   openMenu: null,
   exportMenuOpen: false,
   resources: [],
+  documents: normalizeDocuments(defaultDocuments),
   projects: [
     { id: "project-1", name: "狼人杀游戏", expanded: true, createdAt: Date.now() - 300000 },
     { id: "project-2", name: "项目名称 2", expanded: true, createdAt: Date.now() - 200000 },
@@ -68,6 +71,7 @@ const defaultState = {
       projectId: "project-2",
       createdAt: Date.now() - 3600,
       updatedAt: Date.now() - 3600,
+      workflowId: "prdReview",
       shortcut: "需求评审",
       messages: [
         { id: "msg-1", role: "user", bubble: "我要怎么运行" },
@@ -85,7 +89,7 @@ const defaultState = {
             "1. 在开发者工具里改成你自己的小程序 AppID。",
             "2. 或继续用“测试号/无 AppID 模式”运行。",
           ],
-          cards: [{ id: "doc_prd_preview", title: "PRD 精简版文档卡片" }],
+          cards: [{ artifactId: "doc_prd_preview", title: "PRD 精简版文档卡片", kind: "document" }],
         },
       ],
     },
@@ -107,22 +111,50 @@ function loadState() {
   }
 
   const merged = { ...structuredClone(defaultState), ...saved };
-  const documentIds = Object.keys(documents);
+  const draftSource = saved.composerDraft && typeof saved.composerDraft === "object"
+    ? saved.composerDraft
+    : {
+        text: saved.composerText || "",
+        selectedWorkflowId: saved.composerMode || "",
+        attachments: Array.isArray(saved.attachments) ? saved.attachments : [],
+        modelMode: saved.modelMode || "auto",
+      };
+
   merged.mainView = ["home", "library", "conversation"].includes(merged.mainView) ? merged.mainView : "home";
   merged.docMode = ["preview", "code"].includes(merged.docMode) ? merged.docMode : "preview";
-  merged.attachments = Array.isArray(merged.attachments) ? merged.attachments : [];
   merged.resources = Array.isArray(merged.resources) ? merged.resources : [];
   merged.projects = Array.isArray(merged.projects) ? merged.projects : structuredClone(defaultState.projects);
   merged.conversations = Array.isArray(merged.conversations) ? merged.conversations : structuredClone(defaultState.conversations);
-  merged.composerText = typeof merged.composerText === "string" ? merged.composerText : "";
-  merged.composerMode = typeof merged.composerMode === "string" ? merged.composerMode : "";
-  merged.modelMode = ["auto", "fast", "quality"].includes(merged.modelMode) ? merged.modelMode : "auto";
+  merged.documents = normalizeDocuments(saved.documents && typeof saved.documents === "object" ? saved.documents : defaultDocuments);
+  merged.composerDraft = {
+    text: typeof draftSource.text === "string" ? draftSource.text : "",
+    selectedWorkflowId: normalizeWorkflowId(draftSource.selectedWorkflowId || ""),
+    attachments: Array.isArray(draftSource.attachments) ? draftSource.attachments : [],
+    modelMode: ["auto", "fast", "quality"].includes(draftSource.modelMode) ? draftSource.modelMode : "auto",
+  };
   merged.activeConversationId = merged.conversations.some((item) => item?.id === merged.activeConversationId) ? merged.activeConversationId : "";
   merged.lastConversationId = merged.conversations.some((item) => item?.id === merged.lastConversationId) ? merged.lastConversationId : "";
   merged.activeProjectId = merged.projects.some((item) => item?.id === merged.activeProjectId) ? merged.activeProjectId : null;
   merged.draftProjectId = merged.projects.some((item) => item?.id === merged.draftProjectId) ? merged.draftProjectId : null;
+  const documentIds = Object.keys(merged.documents);
   merged.activeDocumentId = documentIds.includes(merged.activeDocumentId) ? merged.activeDocumentId : defaultState.activeDocumentId;
   merged.documentOpen = Boolean(merged.documentOpen && documentIds.includes(merged.activeDocumentId));
+  merged.docIsEditing = Boolean(merged.docIsEditing);
+  merged.docEditorText = typeof merged.docEditorText === "string" ? merged.docEditorText : "";
+  merged.conversations = merged.conversations.map((conversation) => ({
+    ...conversation,
+    workflowId: normalizeWorkflowId(conversation.workflowId || getWorkflowIdByShortcut(conversation.shortcut || "")),
+    messages: Array.isArray(conversation.messages) ? conversation.messages.map((message) => ({
+      ...message,
+      cards: Array.isArray(message.cards)
+        ? message.cards.map((card) => ({
+            artifactId: card.artifactId || card.id,
+            title: card.title,
+            kind: "document",
+          }))
+        : [],
+    })) : [],
+  }));
   return merged;
 }
 
@@ -287,7 +319,7 @@ function renderLibraryView() {
 
 function renderConversationView() {
   const conversation = getActiveConversation();
-  const draftTitle = state.composerText.trim() ? buildConversationTitle(state.composerText) : "新对话";
+  const draftTitle = state.composerDraft.text.trim() ? buildConversationTitle(state.composerDraft.text) : "新对话";
   const layoutClass = state.documentOpen ? "conversation-layout has-document" : "conversation-layout";
   return `
     <section class="conversation-view">
@@ -327,8 +359,11 @@ function renderMessages(conversation) {
           }).join("")}
           ${message.cards?.length ? `<div class="document-card-list">${message.cards.map((card) => `
             <div class="document-card">
-              <span class="document-card__title">${card.title}</span>
-              <button class="doc-quote" data-action="open-document" data-document-id="${card.id}">引用</button>
+              <button class="document-card__body" data-action="open-document" data-document-id="${card.artifactId}">
+                <span class="document-card__title">${escapeHtml(card.title)}</span>
+                <span class="document-card__meta">点击查看详情</span>
+              </button>
+              <button class="doc-quote" data-action="quote-document" data-document-id="${card.artifactId}">引用</button>
             </div>`).join("")}</div>` : ""}
         </div>
       </div>
@@ -337,7 +372,7 @@ function renderMessages(conversation) {
 }
 
 function renderDocumentPanel() {
-  const documentItem = documents[state.activeDocumentId];
+  const documentItem = getDocumentById(state.activeDocumentId);
   if (!documentItem) return "";
   return `
     <aside class="doc-panel">
@@ -359,11 +394,15 @@ function renderDocumentPanel() {
               </div>
             ` : ""}
           </div>
-          <button class="icon-button">${editIcon()}</button>
-          <button class="icon-button">${copyIcon()}</button>
+          ${state.docIsEditing ? `<button class="doc-text-button" data-action="save-document">保存</button>` : `<button class="icon-button" data-action="edit-document" aria-label="编辑文档">${editIcon()}</button>`}
+          <button class="icon-button" data-action="copy-document" aria-label="复制文档">${copyIcon()}</button>
         </div>
       </div>
-      <div class="doc-content">${state.docMode === "code" ? `<div class="doc-code">${escapeHtml(documentItem.code)}</div>` : renderDocPreview(documentItem)}</div>
+      <div class="doc-content">
+        ${state.docIsEditing ? `
+          <textarea id="docEditorInput" class="doc-editor-textarea">${escapeHtml(state.docEditorText || documentItem.content || "")}</textarea>
+        ` : state.docMode === "code" ? `<div class="doc-code">${escapeHtml(documentItem.content)}</div>` : renderDocPreview(documentItem)}
+      </div>
     </aside>
   `;
 }
@@ -378,19 +417,25 @@ function renderDocPreview(documentItem) {
 }
 
 function renderComposer(withSelect) {
-  const hasFile = state.attachments.some((item) => item.kind === "file");
-  const hasImage = state.attachments.some((item) => item.kind === "image");
+  const draft = state.composerDraft;
+  const hasFile = draft.attachments.some((item) => item.kind === "file");
+  const hasImage = draft.attachments.some((item) => item.kind === "image");
   const sendEnabled = canSend();
+  const workflowId = draft.selectedWorkflowId;
+  const workflowLabel = getShortcutByWorkflowId(workflowId);
+  const workflowIcon = (shortcuts.find((item) => item.name === workflowLabel) || shortcuts[0]).icon;
   return `
     <div class="composer-card">
       <div class="composer-inner">
-        ${(state.attachments.length || state.composerMode) ? `<div class="attachment-strip">
-          ${state.composerMode ? `<span class="attachment-chip attachment-chip--mode">${renderShortcutIcon((shortcuts.find((item) => item.name === state.composerMode) || shortcuts[0]).icon)}${escapeHtml(state.composerMode)}<button data-action="clear-mode">×</button></span>` : ""}
-          ${state.attachments.map((item) => `<span class="attachment-chip">${escapeHtml(item.name)}<button data-action="remove-attachment" data-attachment-id="${item.id}">×</button></span>`).join("")}
-        </div>` : ""}
-        <textarea id="composerInput" class="composer-textarea" placeholder="直接输入您的问题，支持上传图片/文件辅助说明">${escapeHtml(state.composerText)}</textarea>
+        <div class="composer-header${(draft.attachments.length || workflowId) ? "" : " is-empty"}">
+          ${workflowId ? `<span class="attachment-chip attachment-chip--mode">${renderShortcutIcon(workflowIcon)}${escapeHtml(workflowLabel)}<button data-action="clear-mode">×</button></span>` : ""}
+          ${draft.attachments.map((item) => `<span class="attachment-chip attachment-chip--${item.sourceType || item.kind}">${escapeHtml(item.name)}<button data-action="remove-attachment" data-attachment-id="${item.id}">×</button></span>`).join("")}
+        </div>
+        <div class="composer-body">
+          <textarea id="composerInput" class="composer-textarea" placeholder="直接输入您的问题，支持上传图片/文件辅助说明">${escapeHtml(draft.text)}</textarea>
+        </div>
         <div class="composer-footer">
-          <div class="tool-row">
+          <div class="composer-footer__left">
             <label class="icon-button${hasFile ? " is-selected" : ""}" title="上传文件">${fileIcon()}<input id="fileInput" type="file" hidden multiple data-upload-kind="file" /></label>
             <label class="icon-button${hasImage ? " is-selected" : ""}" title="上传图片">${imageIcon()}<input id="imageInput" type="file" hidden multiple accept="image/*" data-upload-kind="image" /></label>
             <button class="tool-pill" data-action="open-library-from-composer">引用资源库</button>
@@ -401,13 +446,16 @@ function renderComposer(withSelect) {
             ${withSelect ? `
               <select id="composerModeSelect" class="tool-select">
                 <option value="">选择快捷功能</option>
-                ${shortcuts.map((item) => `<option value="${item.name}" ${state.composerMode === item.name ? "selected" : ""}>${item.name}</option>`).join("")}
+                ${shortcuts.map((item) => {
+                  const value = getWorkflowIdByShortcut(item.name);
+                  return `<option value="${value}" ${workflowId === value ? "selected" : ""}>${item.name}</option>`;
+                }).join("")}
               </select>
               <select id="modelModeSelectChat" class="tool-select tool-select--model">
                 ${renderModelModeOptions()}
               </select>` : ""}
           </div>
-          <div class="send-row">
+          <div class="composer-footer__right">
             <button class="icon-button voice-button" data-action="voice-input" title="语音输入" aria-label="语音输入">${micIcon()}</button>
             <button class="send-icon${sendEnabled ? " is-active" : ""}" data-action="send-message" ${sendEnabled ? "" : "disabled"}>${sendIcon()}</button>
           </div>
@@ -426,7 +474,7 @@ function bindMainEvents() {
   const input = document.querySelector("#composerInput");
   if (input) {
     input.addEventListener("input", (event) => {
-      state.composerText = event.target.value;
+      state.composerDraft.text = event.target.value;
       syncComposerUi();
     });
     input.addEventListener("keydown", (event) => {
@@ -439,19 +487,25 @@ function bindMainEvents() {
   const select = document.querySelector("#composerModeSelect");
   if (select) {
     select.onchange = (event) => {
-      state.composerMode = event.target.value;
-      persist();
+      state.composerDraft.selectedWorkflowId = normalizeWorkflowId(event.target.value);
+      render();
     };
   }
   document.querySelectorAll("#modelModeSelectHome, #modelModeSelectChat").forEach((selectNode) => {
     selectNode.onchange = (event) => {
-      state.modelMode = event.target.value;
+      state.composerDraft.modelMode = event.target.value;
       persist();
     };
   });
   document.querySelectorAll("input[data-upload-kind]").forEach((inputEl) => {
     inputEl.onchange = (event) => handleFileSelection(event.target.files, event.target.dataset.uploadKind);
   });
+  const docEditor = document.querySelector("#docEditorInput");
+  if (docEditor) {
+    docEditor.addEventListener("input", (event) => {
+      state.docEditorText = event.target.value;
+    });
+  }
   syncComposerUi();
 }
 
@@ -511,7 +565,7 @@ function handleAction(event) {
     return;
   }
   if (action === "shortcut") {
-    state.composerMode = node.dataset.shortcut;
+    state.composerDraft.selectedWorkflowId = getWorkflowIdByShortcut(node.dataset.shortcut);
     render();
     return;
   }
@@ -530,12 +584,12 @@ function handleAction(event) {
     return;
   }
   if (action === "remove-attachment") {
-    state.attachments = state.attachments.filter((item) => item.id !== node.dataset.attachmentId);
+    state.composerDraft.attachments = state.composerDraft.attachments.filter((item) => item.id !== node.dataset.attachmentId);
     render();
     return;
   }
   if (action === "clear-mode") {
-    state.composerMode = "";
+    state.composerDraft.selectedWorkflowId = "";
     render();
     return;
   }
@@ -547,12 +601,21 @@ function handleAction(event) {
     state.documentOpen = true;
     state.activeDocumentId = node.dataset.documentId;
     state.exportMenuOpen = false;
+    state.docIsEditing = false;
+    state.docEditorText = "";
+    render();
+    return;
+  }
+  if (action === "quote-document") {
+    quoteDocumentToComposer(node.dataset.documentId);
     render();
     return;
   }
   if (action === "close-document") {
     state.documentOpen = false;
     state.exportMenuOpen = false;
+    state.docIsEditing = false;
+    state.docEditorText = "";
     render();
     return;
   }
@@ -560,6 +623,19 @@ function handleAction(event) {
     state.docMode = node.dataset.mode;
     state.exportMenuOpen = false;
     render();
+    return;
+  }
+  if (action === "edit-document") {
+    startDocumentEditing();
+    render();
+    return;
+  }
+  if (action === "save-document") {
+    void saveDocumentEdits();
+    return;
+  }
+  if (action === "copy-document") {
+    void copyCurrentDocument();
     return;
   }
   if (action === "quote-resource") {
@@ -596,7 +672,7 @@ function handleAction(event) {
 }
 
 function canSend() {
-  return !state.isGenerating && Boolean(state.composerText.trim() || state.attachments.length);
+  return !state.isGenerating && Boolean(state.composerDraft.text.trim() || state.composerDraft.attachments.length);
 }
 
 function sendCurrentMessage() {
@@ -606,25 +682,26 @@ function sendCurrentMessage() {
     conversation = createConversation(state.draftProjectId, true);
   }
   if (!conversation.title || conversation.title === "新对话") {
-    conversation.title = buildConversationTitle(state.composerText);
+    conversation.title = buildConversationTitle(state.composerDraft.text);
   }
-  const text = state.composerText.trim() || "请结合附件处理";
-  const requestAttachments = [...state.attachments];
+  const text = state.composerDraft.text.trim() || "请结合附件处理";
+  const requestAttachments = state.composerDraft.attachments.map((item) => ({ ...item }));
   conversation.messages.push({ id: createId(), role: "user", bubble: text });
   conversation.messages.push({ id: createId(), role: "assistant", streaming: true, content: [] });
   conversation.updatedAt = Date.now();
   state.isGenerating = true;
-  const selectedShortcut = state.composerMode || conversation.shortcut || "需求评审";
-  conversation.shortcut = selectedShortcut;
-  state.composerText = "";
-  state.attachments = [];
+  const selectedWorkflowId = normalizeWorkflowId(state.composerDraft.selectedWorkflowId);
+  conversation.workflowId = selectedWorkflowId;
+  conversation.shortcut = getShortcutByWorkflowId(selectedWorkflowId);
+  state.composerDraft.text = "";
+  state.composerDraft.attachments = [];
   state.mainView = "conversation";
   state.draftProjectId = conversation.projectId;
   render();
-  void requestAssistantReply(conversation.id, selectedShortcut, text, requestAttachments);
+  void requestAssistantReply(conversation.id, selectedWorkflowId, text, requestAttachments);
 }
 
-async function requestAssistantReply(conversationId, shortcutName, text, attachments) {
+async function requestAssistantReply(conversationId, workflowId, text, attachments) {
   const conversation = getConversationById(conversationId);
   if (!conversation) return;
   try {
@@ -642,12 +719,34 @@ async function requestAssistantReply(conversationId, shortcutName, text, attachm
       },
       body: JSON.stringify({
         provider: ACTIVE_PROVIDER,
-        model: resolveModelForShortcut(shortcutName),
-        branchId: getBranchIdByShortcut(shortcutName),
-        branchName: shortcutName || "普通对话",
+        model: resolveModelForShortcut(getShortcutByWorkflowId(workflowId)),
+        workflowId,
+        workflowName: getShortcutByWorkflowId(workflowId) || "普通对话",
+        branchId: workflowId || "general",
+        branchName: getShortcutByWorkflowId(workflowId) || "普通对话",
+        conversationId,
         message: text,
         attachments: attachments.map(serializeAttachmentForApi),
         history,
+        quotedArtifacts: attachments
+          .filter((item) => item.sourceType === "document")
+          .map((item) => ({
+            artifactId: item.sourceArtifactId,
+            title: item.name,
+            content: item.payload?.text || "",
+            format: item.fileType || "md",
+          })),
+        quotedResources: attachments
+          .filter((item) => item.sourceType === "resource")
+          .map((item) => ({
+            resourceId: item.sourceResourceId,
+            name: item.name,
+            content: item.payload?.text || "",
+            format: item.fileType || "md",
+          })),
+        targetArtifactId: attachments.find((item) => item.sourceType === "document")?.sourceArtifactId || null,
+        artifactEditIntent: attachments.some((item) => item.sourceType === "document") ? "modify" : "none",
+        modelMode: state.composerDraft.modelMode,
       }),
     });
 
@@ -655,46 +754,81 @@ async function requestAssistantReply(conversationId, shortcutName, text, attachm
     if (!response.ok) {
       throw new Error(data.error || "模型请求失败");
     }
-    finishAssistantReply(conversationId, shortcutName, data.reply);
+    finishAssistantReply(conversationId, workflowId, data);
   } catch (error) {
-    finishAssistantReply(conversationId, shortcutName, `请求失败：${error.message}`);
+    finishAssistantReply(conversationId, workflowId, { replyText: `请求失败：${error.message}`, artifacts: [] });
   }
 }
 
-function finishAssistantReply(conversationId, shortcutName, replyText) {
+function finishAssistantReply(conversationId, workflowId, responseData) {
   const conversation = getConversationById(conversationId);
   if (!conversation) return;
   const target = conversation.messages.find((item) => item.streaming);
   if (!target) return;
   target.streaming = false;
-  const artifact = extractArtifactFromReply(replyText, shortcutName, conversation.title);
-  target.content = artifact.summaryLines;
-  target.cards = artifact.card ? [artifact.card] : [];
+  const replyText = responseData.replyText || responseData.reply || "";
+  const backendArtifacts = Array.isArray(responseData.artifacts) ? responseData.artifacts : [];
+  const artifacts = backendArtifacts.length
+    ? backendArtifacts.map((item) => upsertDocumentEntity(item))
+    : collectFallbackArtifacts(replyText, workflowId, conversation);
+  target.content = artifacts.length
+    ? [`已生成 ${artifacts[0].title}。`, "你可以在下方卡片中查看、引用、编辑或导出。"]
+    : normalizeReplyLines(replyText);
+  target.cards = artifacts.map((item) => ({
+    artifactId: item.id,
+    title: item.title,
+    kind: "document",
+  }));
   state.isGenerating = false;
   render();
 }
 
-function exportDocument(exportType) {
-  const documentItem = documents[state.activeDocumentId];
+async function exportDocument(exportType) {
+  const documentItem = getDocumentById(state.activeDocumentId);
   if (!documentItem) return;
   const conversation = getActiveConversation();
   if (exportType === "resource") {
-    state.resources.unshift({
-      id: createResourceId(),
-      name: documentItem.title,
-      type: conversation?.shortcut || state.composerMode || "普通对话",
-      createdAt: documentItem.createdAt,
-      description: conversation?.title || "未命名对话",
-      content: state.docMode === "code" ? documentItem.code : JSON.stringify(documentItem.preview),
-      format: state.docMode === "code" ? (documentItem.format || "md") : "json",
-      sourceDocumentId: documentItem.id,
-    });
-    state.exportMenuOpen = false;
-    window.alert("已导出到资源库。后端接入后可在这里改为持久化保存。");
+    try {
+      const response = await fetch("/api/resources", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          artifactId: documentItem.id,
+          conversationId: conversation?.id || null,
+          workflowId: documentItem.workflowId || conversation?.workflowId || null,
+          name: documentItem.title,
+          description: conversation?.title || "未命名对话",
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "导出资源失败");
+      }
+      upsertResourceRecord(data.resource || data);
+      state.exportMenuOpen = false;
+      window.alert("已导出到资源库。");
+    } catch (error) {
+      upsertResourceRecord({
+        id: createResourceId(),
+        sourceArtifactId: documentItem.id,
+        name: documentItem.title,
+        type: getShortcutByWorkflowId(documentItem.workflowId) || "普通对话",
+        workflowId: documentItem.workflowId || null,
+        createdAt: documentItem.updatedAt || documentItem.createdAt,
+        updatedAt: documentItem.updatedAt || documentItem.createdAt,
+        description: conversation?.title || "未命名对话",
+        content: documentItem.content,
+        format: documentItem.format || "md",
+      });
+      state.exportMenuOpen = false;
+      window.alert("已导出到资源库（本地回退模式）。");
+    }
     render();
     return;
   }
-  const blob = new Blob([state.docMode === "code" ? documentItem.code : documentItem.preview.map((item) => item.text).join("\n")], { type: "text/plain;charset=utf-8" });
+  const blob = new Blob([documentItem.content], { type: "text/plain;charset=utf-8" });
   const ext = exportType === "pdf" ? "pdf" : exportType === "doc" ? "doc" : "md";
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -709,7 +843,7 @@ function exportDocument(exportType) {
 async function handleFileSelection(fileList, kind) {
   const files = Array.from(fileList || []);
   for (const file of files) {
-    state.attachments.push(await createAttachment(file, kind));
+    state.composerDraft.attachments.push(await createAttachment(file, kind));
   }
   render();
 }
@@ -718,10 +852,12 @@ function quoteResourceToComposer(resourceId) {
   const resource = state.resources.find((item) => item.id === resourceId);
   if (!resource) return;
   const isImage = ["png", "jpg", "jpeg", "image/png", "image/jpeg"].includes(resource.format);
-  state.attachments.push({
+  state.composerDraft.attachments.push({
     id: createId(),
-    name: `${resource.name}.${resource.format}`,
+    name: resource.name,
     kind: isImage ? "image" : "file",
+    sourceType: "resource",
+    sourceResourceId: resource.id,
     fileType: resource.format,
     size: resource.content?.length || 0,
     payload: {
@@ -743,7 +879,7 @@ function startVoiceInput() {
   recognition.lang = "zh-CN";
   recognition.onresult = (event) => {
     const text = Array.from(event.results).map((result) => result[0].transcript).join("");
-    state.composerText = `${state.composerText}${state.composerText ? "\n" : ""}${text}`;
+    state.composerDraft.text = `${state.composerDraft.text}${state.composerDraft.text ? "\n" : ""}${text}`;
     render();
   };
   recognition.start();
@@ -761,11 +897,12 @@ function createProject() {
 function createConversation(projectId = null, openConversationView = false) {
   const conversation = {
     id: createId(),
-    title: buildConversationTitle(state.composerText),
+    title: buildConversationTitle(state.composerDraft.text),
     projectId,
     createdAt: Date.now(),
     updatedAt: Date.now(),
-    shortcut: state.composerMode,
+    workflowId: normalizeWorkflowId(state.composerDraft.selectedWorkflowId),
+    shortcut: getShortcutByWorkflowId(state.composerDraft.selectedWorkflowId),
     messages: [],
   };
   state.conversations.unshift(conversation);
@@ -785,6 +922,11 @@ function openDraftConversation(projectId = null) {
   state.activeProjectId = projectId;
   state.draftProjectId = projectId;
   state.documentOpen = false;
+  state.docIsEditing = false;
+  state.docEditorText = "";
+  if (!state.composerDraft.text && !state.composerDraft.attachments.length) {
+    state.composerDraft.selectedWorkflowId = "";
+  }
   state.openMenu = null;
   render();
 }
@@ -888,6 +1030,7 @@ function openConversation(conversationId) {
   state.activeConversationId = conversation.id;
   state.activeProjectId = conversation.projectId;
   state.lastConversationId = conversation.id;
+  state.composerDraft.selectedWorkflowId = normalizeWorkflowId(conversation.workflowId || getWorkflowIdByShortcut(conversation.shortcut || ""));
   state.mainView = "conversation";
   state.openMenu = null;
   render();
@@ -987,15 +1130,15 @@ function renderModelModeOptions() {
     { value: "quality", label: "高质量" },
   ];
   return options
-    .map((item) => `<option value="${item.value}" ${state.modelMode === item.value ? "selected" : ""}>${item.label}</option>`)
+    .map((item) => `<option value="${item.value}" ${state.composerDraft.modelMode === item.value ? "selected" : ""}>${item.label}</option>`)
     .join("");
 }
 
 function resolveModelForShortcut(shortcutName) {
-  if (state.modelMode === "fast") {
+  if (state.composerDraft.modelMode === "fast") {
     return "gpt-4.1-mini";
   }
-  if (state.modelMode === "quality") {
+  if (state.composerDraft.modelMode === "quality") {
     return "gpt-5.2";
   }
   const qualityFirstShortcuts = new Set([
@@ -1011,7 +1154,7 @@ function resolveModelForShortcut(shortcutName) {
   return qualityFirstShortcuts.has(shortcutName) ? "gpt-5.2" : "gpt-4.1-mini";
 }
 
-function getBranchIdByShortcut(shortcutName) {
+function getWorkflowIdByShortcut(shortcutName) {
   const map = {
     "需求澄清": "requirement",
     "生成PRD": "prd",
@@ -1024,7 +1167,28 @@ function getBranchIdByShortcut(shortcutName) {
     "产品调研报告": "productResearch",
     "产品介绍 PPT": "productResearch",
   };
-  return map[shortcutName] || "general";
+  return map[shortcutName] || "";
+}
+
+function getShortcutByWorkflowId(workflowId) {
+  const map = {
+    requirement: "需求澄清",
+    prd: "生成PRD",
+    prdReview: "需求评审",
+    story: "任务拆解",
+    testCase: "生成测试用例",
+    testReview: "测试用例评审",
+    releaseNote: "产品更新说明",
+    competitorAnalysis: "产品竞品分析",
+    productResearch: "产品调研报告",
+  };
+  return map[workflowId] || "";
+}
+
+function normalizeWorkflowId(workflowId) {
+  if (!workflowId) return "";
+  if (getShortcutByWorkflowId(workflowId)) return workflowId;
+  return getWorkflowIdByShortcut(workflowId) || "";
 }
 
 async function createAttachment(file, kind) {
@@ -1089,33 +1253,29 @@ function serializeAttachmentForApi(attachment) {
     type: attachment.fileType || "",
     meta: `${attachment.kind} · ${attachment.size || 0}B`,
     payload: attachment.payload,
+    sourceType: attachment.sourceType || "",
+    sourceArtifactId: attachment.sourceArtifactId || "",
+    sourceResourceId: attachment.sourceResourceId || "",
   };
 }
 
-function extractArtifactFromReply(replyText, shortcutName, conversationTitle) {
+function extractArtifactFromReply(replyText, shortcutName, conversation) {
   const normalized = String(replyText || "").trim() || "模型返回了空结果。";
   const shouldCreateCard = normalized.length > 600 || /^#|\n#|```|^\|/m.test(normalized);
   if (!shouldCreateCard) {
-    return { summaryLines: normalized.split("\n"), card: null };
+    return [];
   }
-  const documentId = createId();
-  const title = inferDocumentTitle(shortcutName, conversationTitle);
-  documents[documentId] = {
-    id: documentId,
-    title,
-    createdAt: new Date().toLocaleString("zh-CN", { hour12: false }),
+  return [upsertDocumentEntity({
+    id: createId(),
+    conversationId: conversation.id,
+    sourceMessageId: conversation.messages.findLast((item) => item.role === "assistant")?.id || "",
+    workflowId: normalizeWorkflowId(conversation.workflowId),
+    title: inferDocumentTitle(shortcutName, conversation.title),
     format: normalized.includes("{") && normalized.includes("}") ? "json" : "md",
-    preview: normalized.split("\n").filter(Boolean).map((line, index) => {
-      if (index === 0) return { type: "h2", text: title };
-      if (line.startsWith("## ")) return { type: "h3", text: line.replace(/^## /, "") };
-      return { type: "p", text: line.replace(/^# /, "") };
-    }),
-    code: normalized,
-  };
-  return {
-    summaryLines: [`已生成 ${title}。`, "你可以在下方卡片中查看、引用或导出。"],
-    card: { id: documentId, title },
-  };
+    content: normalized,
+    createdAt: new Date().toLocaleString("zh-CN", { hour12: false }),
+    updatedAt: new Date().toLocaleString("zh-CN", { hour12: false }),
+  })];
 }
 
 
@@ -1133,4 +1293,186 @@ function inferDocumentTitle(shortcutName, conversationTitle) {
     "产品介绍 PPT": "产品介绍内容",
   };
   return `${conversationTitle || "未命名对话"}-${suffixMap[shortcutName] || "文档"}`;
+}
+
+function normalizeReplyLines(replyText) {
+  const normalized = String(replyText || "").trim() || "模型返回了空结果。";
+  return normalized.split("\n");
+}
+
+function collectFallbackArtifacts(replyText, workflowId, conversation) {
+  const shortcutName = getShortcutByWorkflowId(workflowId);
+  return extractArtifactFromReply(replyText, shortcutName, conversation);
+}
+
+function normalizeDocuments(source) {
+  return Object.fromEntries(
+    Object.entries(source || {}).map(([id, documentItem]) => {
+      const content = documentItem.content || documentItem.code || "";
+      const createdAt = documentItem.createdAt || new Date().toLocaleString("zh-CN", { hour12: false });
+      return [id, {
+        id,
+        conversationId: documentItem.conversationId || "",
+        sourceMessageId: documentItem.sourceMessageId || "",
+        workflowId: normalizeWorkflowId(documentItem.workflowId || ""),
+        title: documentItem.title || "未命名文档",
+        format: documentItem.format || "md",
+        content,
+        preview: Array.isArray(documentItem.preview) && documentItem.preview.length
+          ? documentItem.preview
+          : buildDocumentPreview(content, documentItem.title || "未命名文档", createdAt),
+        createdAt,
+        updatedAt: documentItem.updatedAt || createdAt,
+        version: Number(documentItem.version || 1),
+        isEdited: Boolean(documentItem.isEdited),
+      }];
+    }),
+  );
+}
+
+function buildDocumentPreview(content, title, createdAt) {
+  const lines = String(content || "").split("\n").filter(Boolean);
+  if (!lines.length) {
+    return [
+      { type: "h2", text: title || "未命名文档" },
+      { type: "meta", text: createdAt || "" },
+      { type: "p", text: "暂无内容" },
+    ];
+  }
+  const preview = [
+    { type: "h2", text: title || lines[0].replace(/^# /, "") || "未命名文档" },
+    { type: "meta", text: createdAt || "" },
+  ];
+  lines.forEach((line) => {
+    if (line.startsWith("# ")) return;
+    if (line.startsWith("## ")) {
+      preview.push({ type: "h3", text: line.replace(/^## /, "") });
+      return;
+    }
+    preview.push({ type: "p", text: line });
+  });
+  return preview;
+}
+
+function getDocumentById(documentId) {
+  return state.documents[documentId] || null;
+}
+
+function upsertDocumentEntity(documentInput) {
+  const current = state.documents[documentInput.id] || null;
+  const next = {
+    id: documentInput.id || createId(),
+    conversationId: documentInput.conversationId || current?.conversationId || state.activeConversationId || "",
+    sourceMessageId: documentInput.sourceMessageId || current?.sourceMessageId || "",
+    workflowId: normalizeWorkflowId(documentInput.workflowId || current?.workflowId || ""),
+    title: documentInput.title || current?.title || "未命名文档",
+    format: documentInput.format || current?.format || "md",
+    content: documentInput.content || current?.content || "",
+    createdAt: documentInput.createdAt || current?.createdAt || new Date().toLocaleString("zh-CN", { hour12: false }),
+    updatedAt: documentInput.updatedAt || new Date().toLocaleString("zh-CN", { hour12: false }),
+    version: Number(documentInput.version || (current?.version || 0) + 1),
+    isEdited: Boolean(documentInput.isEdited || current?.isEdited),
+  };
+  next.preview = Array.isArray(documentInput.preview) && documentInput.preview.length
+    ? documentInput.preview
+    : buildDocumentPreview(next.content, next.title, next.createdAt);
+  state.documents[next.id] = next;
+  return next;
+}
+
+function upsertResourceRecord(resource) {
+  const next = {
+    id: resource.id || createResourceId(),
+    sourceArtifactId: resource.sourceArtifactId || resource.artifactId || "",
+    name: resource.name || "未命名资源",
+    type: resource.type || getShortcutByWorkflowId(resource.workflowId) || "普通对话",
+    workflowId: normalizeWorkflowId(resource.workflowId || ""),
+    format: resource.format || "md",
+    content: resource.content || "",
+    description: resource.description || "未命名对话",
+    createdAt: resource.createdAt || new Date().toLocaleString("zh-CN", { hour12: false }),
+    updatedAt: resource.updatedAt || resource.createdAt || new Date().toLocaleString("zh-CN", { hour12: false }),
+  };
+  const index = state.resources.findIndex((item) => item.id === next.id);
+  if (index >= 0) {
+    state.resources.splice(index, 1, next);
+  } else {
+    state.resources.unshift(next);
+  }
+  return next;
+}
+
+function quoteDocumentToComposer(documentId) {
+  const documentItem = getDocumentById(documentId);
+  if (!documentItem) return;
+  state.composerDraft.attachments = state.composerDraft.attachments.filter((item) => item.sourceArtifactId !== documentId);
+  state.composerDraft.attachments.push({
+    id: createId(),
+    name: documentItem.title,
+    kind: "file",
+    sourceType: "document",
+    sourceArtifactId: documentItem.id,
+    fileType: documentItem.format,
+    size: documentItem.content.length,
+    payload: {
+      mode: "text",
+      text: documentItem.content,
+    },
+  });
+}
+
+function startDocumentEditing() {
+  const documentItem = getDocumentById(state.activeDocumentId);
+  if (!documentItem) return;
+  state.docIsEditing = true;
+  state.docEditorText = documentItem.content;
+}
+
+async function saveDocumentEdits() {
+  const documentItem = getDocumentById(state.activeDocumentId);
+  if (!documentItem) return;
+  const content = state.docEditorText;
+  try {
+    const response = await fetch(`/api/artifacts/${documentItem.id}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        title: documentItem.title,
+        format: documentItem.format,
+        content,
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "保存文档失败");
+    }
+    upsertDocumentEntity({
+      ...(data.artifact || data),
+      isEdited: true,
+    });
+  } catch (error) {
+    upsertDocumentEntity({
+      ...documentItem,
+      content,
+      updatedAt: new Date().toLocaleString("zh-CN", { hour12: false }),
+      version: (documentItem.version || 1) + 1,
+      isEdited: true,
+    });
+  }
+  state.docIsEditing = false;
+  state.docEditorText = "";
+  render();
+}
+
+async function copyCurrentDocument() {
+  const documentItem = getDocumentById(state.activeDocumentId);
+  if (!documentItem) return;
+  const copyText = state.docIsEditing ? state.docEditorText : documentItem.content;
+  if (!navigator.clipboard?.writeText) {
+    window.alert("当前浏览器暂不支持复制。");
+    return;
+  }
+  await navigator.clipboard.writeText(copyText);
 }
