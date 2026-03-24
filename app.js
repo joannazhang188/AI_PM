@@ -408,7 +408,11 @@ function renderDocumentPanel() {
 }
 
 function renderDocPreview(documentItem) {
-  return documentItem.preview.map((block) => {
+  return buildDocumentPreview(
+    documentItem.content,
+    documentItem.title,
+    documentItem.createdAt,
+  ).map((block) => {
     if (block.type === "h2") return `<h2>${block.text}</h2>`;
     if (block.type === "meta") return `<div class="doc-meta">${block.text}</div>`;
     if (block.type === "h3") return `<h3>${block.text}</h3>`;
@@ -1332,15 +1336,16 @@ function normalizeDocuments(source) {
 
 function buildDocumentPreview(content, title, createdAt) {
   const lines = String(content || "").split("\n").filter(Boolean);
+  const normalizedTitle = extractDocumentTitle(content, title);
   if (!lines.length) {
     return [
-      { type: "h2", text: title || "未命名文档" },
+      { type: "h2", text: normalizedTitle },
       { type: "meta", text: createdAt || "" },
       { type: "p", text: "暂无内容" },
     ];
   }
   const preview = [
-    { type: "h2", text: title || lines[0].replace(/^# /, "") || "未命名文档" },
+    { type: "h2", text: normalizedTitle },
     { type: "meta", text: createdAt || "" },
   ];
   lines.forEach((line) => {
@@ -1354,20 +1359,30 @@ function buildDocumentPreview(content, title, createdAt) {
   return preview;
 }
 
+function extractDocumentTitle(content, fallbackTitle = "未命名文档") {
+  const firstHeading = String(content || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => /^#\s+/.test(line));
+  return firstHeading ? firstHeading.replace(/^#\s+/, "").trim() : (fallbackTitle || "未命名文档");
+}
+
 function getDocumentById(documentId) {
   return state.documents[documentId] || null;
 }
 
 function upsertDocumentEntity(documentInput) {
   const current = state.documents[documentInput.id] || null;
+  const nextContent = documentInput.content || current?.content || "";
+  const nextTitle = extractDocumentTitle(nextContent, documentInput.title || current?.title || "未命名文档");
   const next = {
     id: documentInput.id || createId(),
     conversationId: documentInput.conversationId || current?.conversationId || state.activeConversationId || "",
     sourceMessageId: documentInput.sourceMessageId || current?.sourceMessageId || "",
     workflowId: normalizeWorkflowId(documentInput.workflowId || current?.workflowId || ""),
-    title: documentInput.title || current?.title || "未命名文档",
+    title: nextTitle,
     format: documentInput.format || current?.format || "md",
-    content: documentInput.content || current?.content || "",
+    content: nextContent,
     createdAt: documentInput.createdAt || current?.createdAt || new Date().toLocaleString("zh-CN", { hour12: false }),
     updatedAt: documentInput.updatedAt || new Date().toLocaleString("zh-CN", { hour12: false }),
     version: Number(documentInput.version || (current?.version || 0) + 1),
@@ -1434,13 +1449,14 @@ async function saveDocumentEdits() {
   const content = state.docEditorText;
   let nextDocument;
   try {
+    const nextTitle = extractDocumentTitle(content, documentItem.title);
     const response = await fetch(`/api/artifacts/${documentItem.id}`, {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        title: documentItem.title,
+        title: nextTitle,
         format: documentItem.format,
         content,
       }),

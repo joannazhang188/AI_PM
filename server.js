@@ -469,8 +469,9 @@ function inferArtifactFormat(content) {
 
 function buildDocumentPreview(content, title, createdAt) {
   const lines = String(content || "").split("\n").filter(Boolean);
+  const normalizedTitle = extractDocumentTitle(content, title);
   const preview = [
-    { type: "h2", text: title || "未命名文档" },
+    { type: "h2", text: normalizedTitle },
     { type: "meta", text: createdAt || "" },
   ];
   lines.forEach((line) => {
@@ -485,6 +486,14 @@ function buildDocumentPreview(content, title, createdAt) {
     preview.push({ type: "p", text: "暂无内容" });
   }
   return preview;
+}
+
+function extractDocumentTitle(content, fallbackTitle = "未命名文档") {
+  const firstHeading = String(content || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => /^#\s+/.test(line));
+  return firstHeading ? firstHeading.replace(/^#\s+/, "").trim() : (fallbackTitle || "未命名文档");
 }
 
 function buildClientConfig() {
@@ -624,11 +633,13 @@ function updateArtifact(artifactId, body) {
   if (!current) {
     throw createError(404, "未找到对应文档");
   }
+  const nextContent = typeof body.content === "string" ? body.content : current.content;
+  const nextTitle = extractDocumentTitle(nextContent, body.title || current.title);
   const next = {
     ...current,
-    title: body.title || current.title,
+    title: nextTitle,
     format: body.format || current.format,
-    content: typeof body.content === "string" ? body.content : current.content,
+    content: nextContent,
     updatedAt: new Date().toLocaleString("zh-CN", { hour12: false }),
     version: Number(current.version || 1) + 1,
     isEdited: true,
