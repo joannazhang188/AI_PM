@@ -42,6 +42,8 @@ const defaultState = {
   documentOpen: false,
   activeDocumentId: "doc_prd_preview",
   docMode: "preview",
+  docReadonly: false,
+  docSource: "conversation",
   docIsEditing: false,
   docEditorText: "",
   composerDraft: {
@@ -140,6 +142,8 @@ function loadState() {
   const documentIds = Object.keys(merged.documents);
   merged.activeDocumentId = documentIds.includes(merged.activeDocumentId) ? merged.activeDocumentId : defaultState.activeDocumentId;
   merged.documentOpen = Boolean(merged.documentOpen && documentIds.includes(merged.activeDocumentId));
+  merged.docReadonly = Boolean(merged.docReadonly);
+  merged.docSource = ["conversation", "library", "reference"].includes(merged.docSource) ? merged.docSource : "conversation";
   merged.docIsEditing = Boolean(merged.docIsEditing);
   merged.docEditorText = typeof merged.docEditorText === "string" ? merged.docEditorText : "";
   merged.conversations = merged.conversations.map((conversation) => ({
@@ -163,13 +167,53 @@ function persist() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
-function render() {
+function captureChatScrollState() {
+  const panel = document.querySelector(".chat-messages");
+  if (!panel || state.mainView !== "conversation" || !state.activeConversationId) {
+    return null;
+  }
+  return {
+    conversationId: state.activeConversationId,
+    scrollTop: panel.scrollTop,
+    scrollHeight: panel.scrollHeight,
+    clientHeight: panel.clientHeight,
+    nearBottom: panel.scrollHeight - panel.scrollTop - panel.clientHeight < 84,
+  };
+}
+
+function restoreChatScrollState(snapshot, options = {}) {
+  requestAnimationFrame(() => {
+    const panel = document.querySelector(".chat-messages");
+    if (!panel || state.mainView !== "conversation" || !state.activeConversationId) {
+      return;
+    }
+    if (options.scrollToBottom) {
+      panel.scrollTop = panel.scrollHeight;
+      return;
+    }
+    if (!snapshot || snapshot.conversationId !== state.activeConversationId) {
+      return;
+    }
+    if (snapshot.nearBottom) {
+      panel.scrollTop = panel.scrollHeight;
+      return;
+    }
+    const maxScrollTop = Math.max(0, panel.scrollHeight - panel.clientHeight);
+    panel.scrollTop = Math.min(snapshot.scrollTop, maxScrollTop);
+  });
+}
+
+function render(options = {}) {
+  const chatScrollState = captureChatScrollState();
   syncDocumentPanelState();
   renderSidebar();
   renderMainView();
   bindSidebarEvents();
   renderFloatingMenu();
-  persist();
+  restoreChatScrollState(chatScrollState, options);
+  if (!options.skipPersist) {
+    persist();
+  }
 }
 
 function renderSidebar() {
@@ -292,37 +336,43 @@ function renderHomeView() {
 }
 
 function renderLibraryView() {
+  const hasDocument = state.documentOpen && state.docSource === "library";
   return `
     <section class="library-view">
-      <div class="library-toolbar">
-        <button class="back-button" data-action="back-from-library"><span>${backIcon()}</span><span>返回对话</span></button>
-      </div>
-      <div class="library-title-block"><h2 class="library-title">资源库</h2></div>
-      ${state.resources.length ? `
-        <div class="table-shell">
-          <table>
-            <colgroup>
-              <col class="library-col-id" />
-              <col class="library-col-name" />
-              <col class="library-col-type" />
-              <col class="library-col-date" />
-              <col class="library-col-desc" />
-              <col class="library-col-action" />
-            </colgroup>
-            <thead>
-              <tr><th>资源 ID</th><th>资源名称</th><th>所属类型</th><th>创建日期</th><th>说明</th><th>操作</th></tr>
-            </thead>
-            <tbody>
-              ${state.resources.map((item) => `
-                <tr>
-                  <td>${item.id}</td><td>${escapeHtml(item.name)}</td><td>${escapeHtml(item.type)}</td><td>${item.createdAt}</td><td>${escapeHtml(item.description)}</td>
-                  <td><button class="table-action" data-action="quote-resource" data-resource-id="${item.id}">引用至对话</button><button class="table-action table-action--danger" data-action="delete-resource" data-resource-id="${item.id}">删除</button></td>
-                </tr>
-              `).join("")}
-            </tbody>
-          </table>
+      <div class="library-layout${hasDocument ? " has-document" : ""}">
+        <div class="library-shell">
+          <div class="library-toolbar">
+            <button class="back-button" data-action="back-from-library"><span>${backIcon()}</span><span>返回对话</span></button>
+          </div>
+          <div class="library-title-block"><h2 class="library-title">资源库</h2></div>
+          ${state.resources.length ? `
+            <div class="table-shell">
+              <table>
+                <colgroup>
+                  <col class="library-col-id" />
+                  <col class="library-col-name" />
+                  <col class="library-col-type" />
+                  <col class="library-col-date" />
+                  <col class="library-col-desc" />
+                  <col class="library-col-action" />
+                </colgroup>
+                <thead>
+                  <tr><th>资源 ID</th><th>资源名称</th><th>所属类型</th><th>创建日期</th><th>说明</th><th>操作</th></tr>
+                </thead>
+                <tbody>
+                  ${state.resources.map((item) => `
+                    <tr>
+                      <td>${item.id}</td><td>${escapeHtml(item.name)}</td><td>${escapeHtml(item.type)}</td><td>${item.createdAt}</td><td>${escapeHtml(item.description)}</td>
+                      <td><div class="table-action-group"><button class="table-action" data-action="view-resource" data-resource-id="${item.id}">查看</button><button class="table-action" data-action="quote-resource" data-resource-id="${item.id}">引用至对话</button><button class="table-action table-action--danger" data-action="delete-resource" data-resource-id="${item.id}">删除</button></div></td>
+                    </tr>
+                  `).join("")}
+                </tbody>
+              </table>
+            </div>
+          ` : `<div class="library-empty">暂无保存资源</div>`}
         </div>
-      ` : `<div class="library-empty">暂无保存资源</div>`}
+        ${hasDocument ? renderDocumentPanel() : ""}
+      </div>
     </section>
   `;
 }
@@ -409,15 +459,15 @@ function renderMessageReferences(references) {
         return `
           <button
             class="message-reference-chip${missing ? " is-missing" : ""}"
-            data-action="quote-history-reference"
+            data-action="view-history-reference"
             data-reference-type="${reference.referenceType}"
             data-reference-id="${reference.referenceId}"
-            title="${missing ? "该文档已不存在" : "引用到对话框"}"
+            title="${missing ? "该文档已不存在" : "查看文档内容"}"
             aria-disabled="${missing ? "true" : "false"}"
           >
             <span class="message-reference-chip__name">${escapeHtml(reference.name)}</span>
             ${missing ? `<span class="message-reference-chip__badge">已失效</span>` : ""}
-            <span class="message-reference-chip__meta">${missing ? "该文档已不存在" : "点击引用"}</span>
+            <span class="message-reference-chip__meta">${missing ? "该文档已不存在" : "点击查看"}</span>
           </button>
         `;
       }).join("")}
@@ -436,21 +486,23 @@ function renderDocumentPanel() {
           <button class="doc-tab${state.docMode === "code" ? " is-active" : ""}" data-action="switch-doc-mode" data-mode="code">代码</button>
           <button class="doc-tab${state.docMode === "preview" ? " is-active" : ""}" data-action="switch-doc-mode" data-mode="preview">预览</button>
         </div>
-        <div class="doc-toolbar-right">
-          <div class="doc-export-wrap">
-            <button class="icon-button" data-action="toggle-export-menu">${downloadIcon()}</button>
-            ${state.exportMenuOpen ? `
-              <div class="doc-export-menu">
-                <button class="doc-export-menu__item" data-action="export-document" data-export-type="pdf">导出为本地pdf</button>
-                <button class="doc-export-menu__item" data-action="export-document" data-export-type="md">导出为本地 md</button>
-                <button class="doc-export-menu__item" data-action="export-document" data-export-type="doc">导出为本地 doc</button>
-                <button class="doc-export-menu__item" data-action="export-document" data-export-type="resource">导出到资源库</button>
-              </div>
-            ` : ""}
+        ${state.docReadonly ? `<div class="doc-toolbar-right doc-toolbar-right--readonly"><span class="doc-readonly-badge">仅查看</span></div>` : `
+          <div class="doc-toolbar-right">
+            <div class="doc-export-wrap">
+              <button class="icon-button" data-action="toggle-export-menu">${downloadIcon()}</button>
+              ${state.exportMenuOpen ? `
+                <div class="doc-export-menu">
+                  <button class="doc-export-menu__item" data-action="export-document" data-export-type="pdf">导出为本地pdf</button>
+                  <button class="doc-export-menu__item" data-action="export-document" data-export-type="md">导出为本地 md</button>
+                  <button class="doc-export-menu__item" data-action="export-document" data-export-type="doc">导出为本地 doc</button>
+                  <button class="doc-export-menu__item" data-action="export-document" data-export-type="resource">导出到资源库</button>
+                </div>
+              ` : ""}
+            </div>
+            ${state.docIsEditing ? `<button class="doc-text-button" data-action="save-document">保存</button>` : `<button class="icon-button" data-action="edit-document" aria-label="编辑文档">${editIcon()}</button>`}
+            <button class="icon-button" data-action="copy-document" aria-label="复制文档">${copyIcon()}</button>
           </div>
-          ${state.docIsEditing ? `<button class="doc-text-button" data-action="save-document">保存</button>` : `<button class="icon-button" data-action="edit-document" aria-label="编辑文档">${editIcon()}</button>`}
-          <button class="icon-button" data-action="copy-document" aria-label="复制文档">${copyIcon()}</button>
-        </div>
+        `}
       </div>
       <div class="doc-content">
         ${state.docIsEditing ? `
@@ -465,16 +517,11 @@ function renderDocPreview(documentItem) {
   if (documentItem.format === "html") {
     return `<iframe class="doc-preview-frame" title="${escapeHtml(documentItem.title)}" srcdoc="${escapeHtml(documentItem.content)}"></iframe>`;
   }
-  return buildDocumentPreview(
+  return renderDocumentBlocks(buildDocumentPreview(
     documentItem.content,
     documentItem.title,
     documentItem.createdAt,
-  ).map((block) => {
-    if (block.type === "h2") return `<h2>${escapeHtml(block.text)}</h2>`;
-    if (block.type === "meta") return `<div class="doc-meta">${escapeHtml(block.text)}</div>`;
-    if (block.type === "h3") return `<h3>${escapeHtml(block.text)}</h3>`;
-    return `<p>${escapeHtml(block.text)}</p>`;
-  }).join("");
+  ));
 }
 
 function getDocumentPreviewText(documentItem) {
@@ -482,7 +529,21 @@ function getDocumentPreviewText(documentItem) {
     documentItem.content,
     documentItem.title,
     documentItem.createdAt,
-  ).map((block) => block.text).filter(Boolean).join("\n");
+  ).map((block) => {
+    if (block.type === "table") {
+      return [
+        block.headers.join(" | "),
+        ...block.rows.map((row) => row.join(" | ")),
+      ].join("\n");
+    }
+    if (block.type === "ul") {
+      return block.items.map((item) => `- ${item}`).join("\n");
+    }
+    if (block.type === "ol") {
+      return block.items.map((item, index) => `${index + 1}. ${item}`).join("\n");
+    }
+    return block.text || "";
+  }).filter(Boolean).join("\n");
 }
 
 function renderComposer(withSelect) {
@@ -624,12 +685,14 @@ function handleAction(event) {
     state.mainView = "library";
     state.openMenu = null;
     state.exportMenuOpen = false;
+    resetDocumentPanelState();
     render();
     return;
   }
   if (action === "back-from-library") {
     state.mainView = state.libraryReturnToConversation && state.lastConversationId ? "conversation" : "home";
     state.activeConversationId = state.libraryReturnToConversation ? state.lastConversationId : "";
+    resetDocumentPanelState();
     render();
     return;
   }
@@ -668,11 +731,7 @@ function handleAction(event) {
     return;
   }
   if (action === "open-document") {
-    state.documentOpen = true;
-    state.activeDocumentId = node.dataset.documentId;
-    state.exportMenuOpen = false;
-    state.docIsEditing = false;
-    state.docEditorText = "";
+    openDocumentPanel(node.dataset.documentId, { readonly: false, source: "conversation" });
     render();
     return;
   }
@@ -710,8 +769,13 @@ function handleAction(event) {
     render();
     return;
   }
-  if (action === "quote-history-reference") {
-    quoteHistoryReference(node.dataset.referenceType, node.dataset.referenceId);
+  if (action === "view-resource") {
+    openResourceViewer(node.dataset.resourceId, "library");
+    render();
+    return;
+  }
+  if (action === "view-history-reference") {
+    viewHistoryReference(node.dataset.referenceType, node.dataset.referenceId);
     return;
   }
   if (action === "delete-resource") {
@@ -784,7 +848,7 @@ function sendCurrentMessage() {
   state.composerDraft.attachments = [];
   state.mainView = "conversation";
   state.draftProjectId = conversation.projectId;
-  render();
+  render({ scrollToBottom: true });
   void requestAssistantReply(conversation.id, selectedWorkflowId, text, requestAttachments);
 }
 
@@ -876,7 +940,7 @@ async function finishAssistantReply(conversationId, workflowId, responseData) {
     kind: "document",
   }));
   state.isGenerating = false;
-  render();
+  render({ scrollToBottom: true });
 }
 
 async function streamAssistantReply(message, lines) {
@@ -885,17 +949,18 @@ async function streamAssistantReply(message, lines) {
     message.content = lines;
     return;
   }
-  const chunkSize = fullText.length > 1600 ? 42 : fullText.length > 800 ? 30 : 18;
+  const chunkSize = fullText.length > 2200 ? 34 : fullText.length > 1200 ? 26 : 16;
   for (let index = chunkSize; index <= fullText.length + chunkSize; index += chunkSize) {
     message.content = fullText.slice(0, Math.min(index, fullText.length)).split("\n");
-    render();
+    render({ scrollToBottom: true, skipPersist: true });
     if (index < fullText.length) {
-      await wait(22);
+      await wait(28);
     }
   }
 }
 
 async function exportDocument(exportType) {
+  if (state.docReadonly) return;
   const documentItem = getDocumentById(state.activeDocumentId);
   if (!documentItem) return;
   const conversation = getActiveConversation();
@@ -1182,6 +1247,10 @@ function getProjectById(projectId) {
   return state.projects.find((item) => item.id === projectId) || null;
 }
 
+function getResourceById(resourceId) {
+  return state.resources.find((item) => item.id === resourceId) || null;
+}
+
 function getProjectConversations(projectId) {
   return state.conversations
     .filter((item) => item.projectId === projectId)
@@ -1453,6 +1522,7 @@ function normalizeDocuments(source) {
       return [id, {
         id,
         conversationId: documentItem.conversationId || "",
+        sourceResourceId: documentItem.sourceResourceId || "",
         sourceMessageId: documentItem.sourceMessageId || "",
         workflowId: normalizeWorkflowId(documentItem.workflowId || ""),
         title: documentItem.title || "未命名文档",
@@ -1471,36 +1541,210 @@ function normalizeDocuments(source) {
 }
 
 function buildDocumentPreview(content, title, createdAt) {
-  const lines = String(content || "").split("\n").filter(Boolean);
-  const normalizedTitle = extractDocumentTitle(content, title);
-  if (!lines.length) {
-    return [
-      { type: "h2", text: normalizedTitle },
-      { type: "meta", text: createdAt || "" },
-      { type: "p", text: "暂无内容" },
-    ];
-  }
+  const normalizedContent = unwrapPreviewContent(content);
+  const lines = normalizedContent.replaceAll("\r\n", "\n").split("\n");
+  const normalizedTitle = extractDocumentTitle(normalizedContent, title);
   const preview = [
     { type: "h2", text: normalizedTitle },
     { type: "meta", text: createdAt || "" },
   ];
-  lines.forEach((line) => {
-    if (line.startsWith("# ")) return;
-    if (line.startsWith("## ")) {
-      preview.push({ type: "h3", text: line.replace(/^## /, "") });
-      return;
+  if (!lines.some((line) => line.trim())) {
+    return [
+      ...preview,
+      { type: "p", text: "暂无内容" },
+    ];
+  }
+
+  let index = 0;
+  while (index < lines.length) {
+    const rawLine = lines[index];
+    const trimmed = rawLine.trim();
+
+    if (!trimmed) {
+      index += 1;
+      continue;
     }
-    preview.push({ type: "p", text: line });
-  });
+
+    if (/^#\s+/.test(trimmed)) {
+      index += 1;
+      continue;
+    }
+
+    if (/^```/.test(trimmed)) {
+      const language = trimmed.replace(/^```/, "").trim();
+      const codeLines = [];
+      index += 1;
+      while (index < lines.length && !/^```/.test(lines[index].trim())) {
+        codeLines.push(lines[index]);
+        index += 1;
+      }
+      if (index < lines.length) {
+        index += 1;
+      }
+      preview.push({
+        type: "code",
+        text: codeLines.join("\n"),
+        language,
+      });
+      continue;
+    }
+
+    if (/^##\s+/.test(trimmed)) {
+      preview.push({ type: "h3", text: trimmed.replace(/^##\s+/, "") });
+      index += 1;
+      continue;
+    }
+
+    if (/^###\s+/.test(trimmed)) {
+      preview.push({ type: "h4", text: trimmed.replace(/^###\s+/, "") });
+      index += 1;
+      continue;
+    }
+
+    if (isMarkdownTableStart(lines, index)) {
+      const { tableBlock, nextIndex } = collectMarkdownTable(lines, index);
+      if (tableBlock) {
+        preview.push(tableBlock);
+      }
+      index = nextIndex;
+      continue;
+    }
+
+    if (/^[-*]\s+/.test(trimmed)) {
+      const items = [];
+      while (index < lines.length && /^[-*]\s+/.test(lines[index].trim())) {
+        items.push(lines[index].trim().replace(/^[-*]\s+/, ""));
+        index += 1;
+      }
+      preview.push({ type: "ul", items });
+      continue;
+    }
+
+    if (/^\d+\.\s+/.test(trimmed)) {
+      const items = [];
+      while (index < lines.length && /^\d+\.\s+/.test(lines[index].trim())) {
+        items.push(lines[index].trim().replace(/^\d+\.\s+/, ""));
+        index += 1;
+      }
+      preview.push({ type: "ol", items });
+      continue;
+    }
+
+    const paragraphLines = [trimmed];
+    index += 1;
+    while (index < lines.length) {
+      const nextLine = lines[index].trim();
+      if (!nextLine || /^#/.test(nextLine) || /^```/.test(nextLine) || /^[-*]\s+/.test(nextLine) || /^\d+\.\s+/.test(nextLine) || isMarkdownTableStart(lines, index)) {
+        break;
+      }
+      paragraphLines.push(nextLine);
+      index += 1;
+    }
+    preview.push({ type: "p", text: paragraphLines.join("\n") });
+  }
+
   return preview;
 }
 
+function renderDocumentBlocks(blocks) {
+  return blocks.map((block) => {
+    if (block.type === "h2") return `<h2>${escapeHtml(block.text)}</h2>`;
+    if (block.type === "meta") return `<div class="doc-meta">${escapeHtml(block.text)}</div>`;
+    if (block.type === "h3") return `<h3>${renderMarkdownInline(block.text)}</h3>`;
+    if (block.type === "h4") return `<h4>${renderMarkdownInline(block.text)}</h4>`;
+    if (block.type === "ul") {
+      return `<ul>${block.items.map((item) => `<li>${renderMarkdownInline(item)}</li>`).join("")}</ul>`;
+    }
+    if (block.type === "ol") {
+      return `<ol>${block.items.map((item) => `<li>${renderMarkdownInline(item)}</li>`).join("")}</ol>`;
+    }
+    if (block.type === "code") {
+      return `<pre class="doc-code-block"><code>${escapeHtml(block.text)}</code></pre>`;
+    }
+    if (block.type === "table") {
+      return `
+        <div class="doc-table-card">
+          <div class="doc-table-card__head">表格</div>
+          <div class="doc-table-wrap">
+            <table class="doc-table">
+              <thead>
+                <tr>${block.headers.map((cell) => `<th>${renderMarkdownInline(cell)}</th>`).join("")}</tr>
+              </thead>
+              <tbody>
+                ${block.rows.map((row) => `<tr>${row.map((cell) => `<td>${renderMarkdownInline(cell)}</td>`).join("")}</tr>`).join("")}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+    return `<p>${renderMarkdownInline(block.text)}</p>`;
+  }).join("");
+}
+
+function renderMarkdownInline(text) {
+  return escapeHtml(text || "")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>')
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\n/g, "<br>");
+}
+
+function isMarkdownTableDivider(line) {
+  const trimmed = String(line || "").trim();
+  return /^\|?(?:\s*:?-{1,}:?\s*\|)+\s*:?-{1,}:?\s*\|?$/.test(trimmed);
+}
+
+function parseMarkdownTableRow(line) {
+  const trimmed = String(line || "").trim().replace(/^\|/, "").replace(/\|$/, "");
+  return trimmed.split("|").map((cell) => cell.trim());
+}
+
+function isMarkdownTableStart(lines, index) {
+  const currentLine = String(lines[index] || "").trim();
+  const nextLine = String(lines[index + 1] || "").trim();
+  if (!currentLine.includes("|") || !isMarkdownTableDivider(nextLine)) {
+    return false;
+  }
+  return parseMarkdownTableRow(currentLine).length >= 2;
+}
+
+function collectMarkdownTable(lines, index) {
+  const headers = parseMarkdownTableRow(lines[index]);
+  const rows = [];
+  let cursor = index + 2;
+  while (cursor < lines.length) {
+    const line = String(lines[cursor] || "").trim();
+    if (!line || !line.includes("|") || /^#/.test(line) || /^```/.test(line)) {
+      break;
+    }
+    const cells = parseMarkdownTableRow(line);
+    rows.push(headers.map((_, cellIndex) => cells[cellIndex] || ""));
+    cursor += 1;
+  }
+  return {
+    tableBlock: {
+      type: "table",
+      headers,
+      rows,
+    },
+    nextIndex: cursor,
+  };
+}
+
 function extractDocumentTitle(content, fallbackTitle = "未命名文档") {
-  const firstHeading = String(content || "")
+  const firstHeading = unwrapPreviewContent(content)
     .split("\n")
     .map((line) => line.trim())
     .find((line) => /^#\s+/.test(line));
   return firstHeading ? firstHeading.replace(/^#\s+/, "").trim() : (fallbackTitle || "未命名文档");
+}
+
+function unwrapPreviewContent(content) {
+  const raw = String(content || "");
+  const normalized = raw.replaceAll("\r\n", "\n").trim();
+  const fencedMatch = normalized.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/i);
+  return fencedMatch ? fencedMatch[1] : raw;
 }
 
 function getDocumentById(documentId) {
@@ -1514,6 +1758,7 @@ function upsertDocumentEntity(documentInput) {
   const next = {
     id: documentInput.id || createId(),
     conversationId: documentInput.conversationId || current?.conversationId || state.activeConversationId || "",
+    sourceResourceId: documentInput.sourceResourceId || current?.sourceResourceId || "",
     sourceMessageId: documentInput.sourceMessageId || current?.sourceMessageId || "",
     workflowId: normalizeWorkflowId(documentInput.workflowId || current?.workflowId || ""),
     title: nextTitle,
@@ -1556,6 +1801,18 @@ function upsertResourceRecord(resource) {
 function resetDocumentPanelState() {
   state.documentOpen = false;
   state.activeDocumentId = "";
+  state.docReadonly = false;
+  state.docSource = "conversation";
+  state.exportMenuOpen = false;
+  state.docIsEditing = false;
+  state.docEditorText = "";
+}
+
+function openDocumentPanel(documentId, options = {}) {
+  state.documentOpen = true;
+  state.activeDocumentId = documentId;
+  state.docReadonly = Boolean(options.readonly);
+  state.docSource = options.source || "conversation";
   state.exportMenuOpen = false;
   state.docIsEditing = false;
   state.docEditorText = "";
@@ -1563,13 +1820,31 @@ function resetDocumentPanelState() {
 
 function syncDocumentPanelState() {
   if (!state.documentOpen) return;
+  const documentItem = getDocumentById(state.activeDocumentId);
+  if (!documentItem) {
+    resetDocumentPanelState();
+    return;
+  }
+  if (documentItem.sourceResourceId && !getResourceById(documentItem.sourceResourceId)) {
+    resetDocumentPanelState();
+    return;
+  }
+  if (state.mainView === "library") {
+    if (state.docSource !== "library") {
+      resetDocumentPanelState();
+    }
+    return;
+  }
   if (state.mainView !== "conversation") {
     resetDocumentPanelState();
     return;
   }
+  if (state.docSource === "library") {
+    resetDocumentPanelState();
+    return;
+  }
   const conversation = getActiveConversation();
-  const documentItem = getDocumentById(state.activeDocumentId);
-  if (!conversation || !documentItem || documentItem.conversationId !== conversation.id) {
+  if (!conversation || (documentItem.conversationId && documentItem.conversationId !== conversation.id)) {
     resetDocumentPanelState();
   }
 }
@@ -1607,7 +1882,51 @@ function quoteDocumentToComposer(documentId) {
   });
 }
 
+function openResourceViewer(resourceId, source = "library") {
+  const resource = getResourceById(resourceId);
+  if (!resource) {
+    showToast("该文档已不存在");
+    return;
+  }
+  const scopedConversationId = source === "library" ? "" : (state.activeConversationId || "");
+  const previewDocument = upsertDocumentEntity({
+    id: source === "library" ? `resource-preview-${resource.id}` : `resource-preview-${scopedConversationId}-${resource.id}`,
+    conversationId: scopedConversationId,
+    sourceResourceId: resource.id,
+    workflowId: resource.workflowId || "",
+    title: resource.name,
+    format: resource.format || "md",
+    content: resource.content || "",
+    createdAt: resource.createdAt,
+    updatedAt: resource.updatedAt || resource.createdAt,
+    isEdited: false,
+  });
+  openDocumentPanel(previewDocument.id, { readonly: true, source });
+}
+
+function openReferencedDocumentViewer(documentId) {
+  const documentItem = getDocumentById(documentId);
+  if (!documentItem) {
+    showToast("该文档已不存在");
+    return;
+  }
+  const scopedConversationId = state.activeConversationId || "";
+  const previewDocument = upsertDocumentEntity({
+    id: `reference-preview-${scopedConversationId}-${documentItem.id}`,
+    conversationId: scopedConversationId,
+    workflowId: documentItem.workflowId || "",
+    title: documentItem.title,
+    format: documentItem.format || "md",
+    content: documentItem.content || "",
+    createdAt: documentItem.createdAt,
+    updatedAt: documentItem.updatedAt || documentItem.createdAt,
+    isEdited: false,
+  });
+  openDocumentPanel(previewDocument.id, { readonly: true, source: "reference" });
+}
+
 function startDocumentEditing() {
+  if (state.docReadonly) return;
   const documentItem = getDocumentById(state.activeDocumentId);
   if (!documentItem) return;
   state.docIsEditing = true;
@@ -1615,6 +1934,7 @@ function startDocumentEditing() {
 }
 
 async function saveDocumentEdits() {
+  if (state.docReadonly) return;
   const documentItem = getDocumentById(state.activeDocumentId);
   if (!documentItem) return;
   const content = state.docEditorText;
@@ -1660,6 +1980,7 @@ async function saveDocumentEdits() {
 }
 
 async function copyCurrentDocument() {
+  if (state.docReadonly) return;
   const documentItem = getDocumentById(state.activeDocumentId);
   if (!documentItem) return;
   const copyText = state.docIsEditing
@@ -1677,25 +1998,23 @@ async function copyCurrentDocument() {
   showToast("已复制内容");
 }
 
-function quoteHistoryReference(referenceType, referenceId) {
+function viewHistoryReference(referenceType, referenceId) {
   if (referenceType === "resource") {
-    const exists = state.resources.some((item) => item.id === referenceId);
-    if (!exists) {
+    if (!getResourceById(referenceId)) {
       showToast("该文档已不存在");
       return;
     }
-    quoteResourceToComposer(referenceId);
+    openResourceViewer(referenceId, "reference");
     render();
     return;
   }
 
   if (referenceType === "document") {
-    const exists = Boolean(getDocumentById(referenceId));
-    if (!exists) {
+    if (!getDocumentById(referenceId)) {
       showToast("该文档已不存在");
       return;
     }
-    quoteDocumentToComposer(referenceId);
+    openReferencedDocumentViewer(referenceId);
     render();
   }
 }
