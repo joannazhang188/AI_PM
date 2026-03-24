@@ -746,14 +746,17 @@ button {
   display: grid;
   justify-items: end;
   gap: 8px;
+  max-width: min(520px, 78%);
 }
 
 .bubble-user {
-  max-width: 220px;
+  width: fit-content;
+  max-width: 100%;
   padding: 12px 18px;
   border-radius: 16px;
   background: rgba(0, 0, 0, 0.05);
   font-weight: 700;
+  line-height: 1.65;
 }
 
 .message-reference-list {
@@ -853,9 +856,25 @@ button {
   animation-delay: 0.3s;
 }
 
+.assistant-cursor {
+  display: inline-block;
+  width: 7px;
+  height: 1.15em;
+  margin-left: 3px;
+  vertical-align: -0.15em;
+  border-radius: 4px;
+  background: rgba(79, 86, 112, 0.55);
+  animation: cursor-blink 0.9s steps(1) infinite;
+}
+
 @keyframes dot-pulse {
   0%, 80%, 100% { transform: scale(0.8); opacity: 0.4; }
   40% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes cursor-blink {
+  0%, 48% { opacity: 1; }
+  49%, 100% { opacity: 0; }
 }
 
 .assistant-block ol,

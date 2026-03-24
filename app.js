@@ -164,6 +164,7 @@ function persist() {
 }
 
 function render() {
+  syncDocumentPanelState();
   renderSidebar();
   renderMainView();
   bindSidebarEvents();
@@ -363,16 +364,18 @@ function renderMessages(conversation) {
       `;
     }
     if (message.streaming) {
-      return `<div class="bubble-row"><div class="assistant-block"><div class="streaming-indicator"><span></span><span></span><span></span></div></div></div>`;
+      return `
+        <div class="bubble-row">
+          <div class="assistant-block">
+            ${message.content?.length ? renderAssistantContent(message.content, true) : `<div class="streaming-indicator"><span></span><span></span><span></span></div>`}
+          </div>
+        </div>
+      `;
     }
     return `
       <div class="bubble-row">
         <div class="assistant-block">
-          ${message.content.map((line) => {
-            if (!line) return "<div style='height:12px'></div>";
-            const normalized = escapeHtml(line).replace("/Users/mac/AI 项目/项目/werewolf-miniapp", "<span class='inline-code'>/Users/mac/AI 项目/项目/werewolf-miniapp</span>");
-            return `<div>${normalized}</div>`;
-          }).join("")}
+          ${renderAssistantContent(message.content)}
           ${message.cards?.length ? `<div class="document-card-list">${message.cards.map((card) => `
             <div class="document-card">
               <button class="document-card__body" data-action="open-document" data-document-id="${card.artifactId}">
@@ -385,6 +388,17 @@ function renderMessages(conversation) {
       </div>
     `;
   }).join("");
+}
+
+function renderAssistantContent(lines, isStreaming = false) {
+  return `
+    ${lines.map((line) => {
+      if (!line) return "<div style='height:12px'></div>";
+      const normalized = escapeHtml(line).replace("/Users/mac/AI 项目/项目/werewolf-miniapp", "<span class='inline-code'>/Users/mac/AI 项目/项目/werewolf-miniapp</span>");
+      return `<div>${normalized}</div>`;
+    }).join("")}
+    ${isStreaming ? `<span class="assistant-cursor" aria-hidden="true"></span>` : ""}
+  `;
 }
 
 function renderMessageReferences(references) {
@@ -634,7 +648,8 @@ function handleAction(event) {
   }
   if (action === "exit-conversation") {
     state.mainView = "home";
-    state.documentOpen = false;
+    state.activeConversationId = "";
+    resetDocumentPanelState();
     render();
     return;
   }
@@ -667,10 +682,7 @@ function handleAction(event) {
     return;
   }
   if (action === "close-document") {
-    state.documentOpen = false;
-    state.exportMenuOpen = false;
-    state.docIsEditing = false;
-    state.docEditorText = "";
+    resetDocumentPanelState();
     render();
     return;
   }
@@ -741,7 +753,7 @@ function canSend() {
 
 function sendCurrentMessage() {
   if (!canSend()) return;
-  let conversation = getActiveConversation();
+  let conversation = state.mainView === "conversation" ? getActiveConversation() : null;
   if (!conversation) {
     conversation = createConversation(state.draftProjectId, true);
   }
@@ -833,18 +845,17 @@ async function requestAssistantReply(conversationId, workflowId, text, attachmen
     if (!response.ok) {
       throw new Error(data.error || "模型请求失败");
     }
-    finishAssistantReply(conversationId, workflowId, data);
+    await finishAssistantReply(conversationId, workflowId, data);
   } catch (error) {
-    finishAssistantReply(conversationId, workflowId, { replyText: `请求失败：${error.message}`, artifacts: [] });
+    await finishAssistantReply(conversationId, workflowId, { replyText: `请求失败：${error.message}`, artifacts: [] });
   }
 }
 
-function finishAssistantReply(conversationId, workflowId, responseData) {
+async function finishAssistantReply(conversationId, workflowId, responseData) {
   const conversation = getConversationById(conversationId);
   if (!conversation) return;
   const target = conversation.messages.find((item) => item.streaming);
   if (!target) return;
-  target.streaming = false;
   conversation.lastWorkflowStage = responseData.stage || "";
   const replyText = responseData.replyText || responseData.reply || "";
   const backendArtifacts = Array.isArray(responseData.artifacts) ? responseData.artifacts : [];
@@ -853,9 +864,12 @@ function finishAssistantReply(conversationId, workflowId, responseData) {
     : responseData.stage === "template_confirm"
       ? []
       : collectFallbackArtifacts(replyText, workflowId, conversation);
-  target.content = artifacts.length
-    ? [`已生成 ${artifacts[0].title}。`, "你可以在下方卡片中查看、引用、编辑或导出。"]
-    : normalizeReplyLines(replyText);
+  if (artifacts.length) {
+    target.content = [`已生成 ${artifacts[0].title}。`, "你可以在下方卡片中查看、引用、编辑或导出。"];
+  } else {
+    await streamAssistantReply(target, normalizeReplyLines(replyText));
+  }
+  target.streaming = false;
   target.cards = artifacts.map((item) => ({
     artifactId: item.id,
     title: item.title,
@@ -863,6 +877,22 @@ function finishAssistantReply(conversationId, workflowId, responseData) {
   }));
   state.isGenerating = false;
   render();
+}
+
+async function streamAssistantReply(message, lines) {
+  const fullText = lines.join("\n");
+  if (!fullText.trim()) {
+    message.content = lines;
+    return;
+  }
+  const chunkSize = fullText.length > 1600 ? 42 : fullText.length > 800 ? 30 : 18;
+  for (let index = chunkSize; index <= fullText.length + chunkSize; index += chunkSize) {
+    message.content = fullText.slice(0, Math.min(index, fullText.length)).split("\n");
+    render();
+    if (index < fullText.length) {
+      await wait(22);
+    }
+  }
 }
 
 async function exportDocument(exportType) {
@@ -1004,6 +1034,7 @@ function createConversation(projectId = null, openConversationView = false) {
   state.draftProjectId = projectId;
   state.lastConversationId = conversation.id;
   state.mainView = "conversation";
+  resetDocumentPanelState();
   state.openMenu = null;
   if (openConversationView) render();
   return conversation;
@@ -1014,9 +1045,7 @@ function openDraftConversation(projectId = null) {
   state.activeConversationId = "";
   state.activeProjectId = projectId;
   state.draftProjectId = projectId;
-  state.documentOpen = false;
-  state.docIsEditing = false;
-  state.docEditorText = "";
+  resetDocumentPanelState();
   if (!state.composerDraft.text && !state.composerDraft.attachments.length) {
     state.composerDraft.selectedWorkflowId = "";
   }
@@ -1065,8 +1094,15 @@ function deleteProject(projectId) {
   const project = getProjectById(projectId);
   if (!project) return;
   if (!window.confirm(`确认删除项目「${project.name}」？该项目下所有对话也会被删除。`)) return;
+  const deletedConversationIds = new Set(
+    state.conversations.filter((item) => item.projectId === projectId).map((item) => item.id),
+  );
   state.projects = state.projects.filter((item) => item.id !== projectId);
   state.conversations = state.conversations.filter((item) => item.projectId !== projectId);
+  removeDocumentsByConversationIds(deletedConversationIds);
+  if (deletedConversationIds.has(state.lastConversationId)) {
+    state.lastConversationId = "";
+  }
   if (state.activeProjectId === projectId) {
     state.activeProjectId = null;
     state.activeConversationId = "";
@@ -1091,6 +1127,10 @@ function deleteConversation(conversationId) {
   if (!conversation) return;
   if (!window.confirm(`确认删除对话「${conversation.title}」？`)) return;
   state.conversations = state.conversations.filter((item) => item.id !== conversationId);
+  removeDocumentsByConversationIds(new Set([conversationId]));
+  if (state.lastConversationId === conversationId) {
+    state.lastConversationId = "";
+  }
   if (state.activeConversationId === conversationId) {
     state.activeConversationId = "";
     state.activeProjectId = null;
@@ -1125,6 +1165,7 @@ function openConversation(conversationId) {
   state.lastConversationId = conversation.id;
   state.composerDraft.selectedWorkflowId = normalizeWorkflowId(conversation.workflowId || getWorkflowIdByShortcut(conversation.shortcut || ""));
   state.mainView = "conversation";
+  resetDocumentPanelState();
   state.openMenu = null;
   render();
 }
@@ -1512,6 +1553,38 @@ function upsertResourceRecord(resource) {
   return next;
 }
 
+function resetDocumentPanelState() {
+  state.documentOpen = false;
+  state.activeDocumentId = "";
+  state.exportMenuOpen = false;
+  state.docIsEditing = false;
+  state.docEditorText = "";
+}
+
+function syncDocumentPanelState() {
+  if (!state.documentOpen) return;
+  if (state.mainView !== "conversation") {
+    resetDocumentPanelState();
+    return;
+  }
+  const conversation = getActiveConversation();
+  const documentItem = getDocumentById(state.activeDocumentId);
+  if (!conversation || !documentItem || documentItem.conversationId !== conversation.id) {
+    resetDocumentPanelState();
+  }
+}
+
+function removeDocumentsByConversationIds(conversationIds) {
+  if (!conversationIds?.size) return;
+  const activeDocument = getDocumentById(state.activeDocumentId);
+  if (activeDocument && conversationIds.has(activeDocument.conversationId)) {
+    resetDocumentPanelState();
+  }
+  state.documents = Object.fromEntries(
+    Object.entries(state.documents).filter(([, item]) => !conversationIds.has(item.conversationId)),
+  );
+}
+
 function quoteDocumentToComposer(documentId) {
   const documentItem = getDocumentById(documentId);
   if (!documentItem) {
@@ -1641,6 +1714,10 @@ function removeComposerResourceReferences(resourceId) {
   const before = state.composerDraft.attachments.length;
   state.composerDraft.attachments = state.composerDraft.attachments.filter((item) => item.sourceResourceId !== resourceId);
   return before - state.composerDraft.attachments.length;
+}
+
+function wait(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function isTemplateConfirmationText(text, conversation) {
