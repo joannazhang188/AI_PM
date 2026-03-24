@@ -299,6 +299,14 @@ function renderLibraryView() {
       ${state.resources.length ? `
         <div class="table-shell">
           <table>
+            <colgroup>
+              <col class="library-col-id" />
+              <col class="library-col-name" />
+              <col class="library-col-type" />
+              <col class="library-col-date" />
+              <col class="library-col-desc" />
+              <col class="library-col-action" />
+            </colgroup>
             <thead>
               <tr><th>资源 ID</th><th>资源名称</th><th>所属类型</th><th>创建日期</th><th>说明</th><th>操作</th></tr>
             </thead>
@@ -344,7 +352,14 @@ function renderMessages(conversation) {
   if (!conversation.messages.length) return "";
   return conversation.messages.map((message) => {
     if (message.role === "user") {
-      return `<div class="bubble-row bubble-row--user"><div class="bubble-user">${escapeHtml(message.bubble)}</div></div>`;
+      return `
+        <div class="bubble-row bubble-row--user">
+          <div class="bubble-user-wrap">
+            <div class="bubble-user">${escapeHtml(message.bubble)}</div>
+            ${message.references?.length ? renderMessageReferences(message.references) : ""}
+          </div>
+        </div>
+      `;
     }
     if (message.streaming) {
       return `<div class="bubble-row"><div class="assistant-block"><div class="streaming-indicator"><span></span><span></span><span></span></div></div></div>`;
@@ -369,6 +384,28 @@ function renderMessages(conversation) {
       </div>
     `;
   }).join("");
+}
+
+function renderMessageReferences(references) {
+  return `
+    <div class="message-reference-list">
+      ${references.map((reference) => {
+        const missing = isReferenceMissing(reference);
+        return `
+          <button
+            class="message-reference-chip${missing ? " is-missing" : ""}"
+            data-action="quote-history-reference"
+            data-reference-type="${reference.referenceType}"
+            data-reference-id="${reference.referenceId}"
+            title="${missing ? "该文档已不存在" : "引用到对话框"}"
+          >
+            <span class="message-reference-chip__name">${escapeHtml(reference.name)}</span>
+            <span class="message-reference-chip__meta">${missing ? "该文档已不存在" : "点击引用"}</span>
+          </button>
+        `;
+      }).join("")}
+    </div>
+  `;
 }
 
 function renderDocumentPanel() {
@@ -647,8 +684,17 @@ function handleAction(event) {
     render();
     return;
   }
+  if (action === "quote-history-reference") {
+    quoteHistoryReference(node.dataset.referenceType, node.dataset.referenceId);
+    return;
+  }
   if (action === "delete-resource") {
+    const resource = state.resources.find((item) => item.id === node.dataset.resourceId);
+    if (!resource) return;
+    if (!window.confirm(`确认删除资源「${resource.name}」？`)) return;
     state.resources = state.resources.filter((item) => item.id !== node.dataset.resourceId);
+    state.composerDraft.attachments = state.composerDraft.attachments.filter((item) => item.sourceResourceId !== node.dataset.resourceId);
+    showToast("删除成功");
     render();
     return;
   }
@@ -690,7 +736,18 @@ function sendCurrentMessage() {
   }
   const text = state.composerDraft.text.trim() || "请结合附件处理";
   const requestAttachments = state.composerDraft.attachments.map((item) => ({ ...item }));
-  conversation.messages.push({ id: createId(), role: "user", bubble: text });
+  conversation.messages.push({
+    id: createId(),
+    role: "user",
+    bubble: text,
+    references: requestAttachments
+      .filter((item) => item.sourceType === "resource" || item.sourceType === "document")
+      .map((item) => ({
+        referenceType: item.sourceType,
+        referenceId: item.sourceType === "resource" ? item.sourceResourceId : item.sourceArtifactId,
+        name: item.name,
+      })),
+  });
   conversation.messages.push({ id: createId(), role: "assistant", streaming: true, content: [] });
   conversation.updatedAt = Date.now();
   state.isGenerating = true;
@@ -854,7 +911,10 @@ async function handleFileSelection(fileList, kind) {
 
 function quoteResourceToComposer(resourceId) {
   const resource = state.resources.find((item) => item.id === resourceId);
-  if (!resource) return;
+  if (!resource) {
+    showToast("该文档已不存在");
+    return;
+  }
   const isImage = ["png", "jpg", "jpeg", "image/png", "image/jpeg"].includes(resource.format);
   state.composerDraft.attachments.push({
     id: createId(),
@@ -1419,7 +1479,10 @@ function upsertResourceRecord(resource) {
 
 function quoteDocumentToComposer(documentId) {
   const documentItem = getDocumentById(documentId);
-  if (!documentItem) return;
+  if (!documentItem) {
+    showToast("该文档已不存在");
+    return;
+  }
   state.composerDraft.attachments = state.composerDraft.attachments.filter((item) => item.sourceArtifactId !== documentId);
   state.composerDraft.attachments.push({
     id: createId(),
@@ -1484,6 +1547,7 @@ async function saveDocumentEdits() {
   state.docIsEditing = false;
   state.docEditorText = "";
   state.docMode = "preview";
+  showToast("保存成功");
   render();
 }
 
@@ -1496,4 +1560,53 @@ async function copyCurrentDocument() {
     return;
   }
   await navigator.clipboard.writeText(copyText);
+  showToast("已复制内容");
+}
+
+function quoteHistoryReference(referenceType, referenceId) {
+  if (referenceType === "resource") {
+    const exists = state.resources.some((item) => item.id === referenceId);
+    if (!exists) {
+      showToast("该文档已不存在");
+      return;
+    }
+    quoteResourceToComposer(referenceId);
+    render();
+    return;
+  }
+
+  if (referenceType === "document") {
+    const exists = Boolean(getDocumentById(referenceId));
+    if (!exists) {
+      showToast("该文档已不存在");
+      return;
+    }
+    quoteDocumentToComposer(referenceId);
+    render();
+  }
+}
+
+function isReferenceMissing(reference) {
+  if (reference.referenceType === "resource") {
+    return !state.resources.some((item) => item.id === reference.referenceId);
+  }
+  if (reference.referenceType === "document") {
+    return !getDocumentById(reference.referenceId);
+  }
+  return false;
+}
+
+function showToast(message) {
+  const existing = document.querySelector("#toastMessage");
+  if (existing) existing.remove();
+  const toast = document.createElement("div");
+  toast.id = "toastMessage";
+  toast.className = "toast-message";
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add("is-visible"));
+  window.setTimeout(() => {
+    toast.classList.remove("is-visible");
+    window.setTimeout(() => toast.remove(), 180);
+  }, 1800);
 }

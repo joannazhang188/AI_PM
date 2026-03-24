@@ -702,12 +702,58 @@ button {
   justify-content: flex-end;
 }
 
+.bubble-user-wrap {
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+}
+
 .bubble-user {
   max-width: 220px;
   padding: 12px 18px;
   border-radius: 16px;
   background: rgba(0, 0, 0, 0.05);
   font-weight: 700;
+}
+
+.message-reference-list {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  max-width: 420px;
+}
+
+.message-reference-chip {
+  display: grid;
+  gap: 2px;
+  min-width: 140px;
+  padding: 8px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(85, 99, 167, 0.12);
+  background: rgba(255, 255, 255, 0.9);
+  text-align: left;
+}
+
+.message-reference-chip.is-missing {
+  border-color: rgba(224, 88, 88, 0.18);
+  background: rgba(255, 244, 244, 0.95);
+}
+
+.message-reference-chip__name {
+  font-size: 12px;
+  font-weight: 700;
+  color: #28324f;
+}
+
+.message-reference-chip__meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.message-reference-chip.is-missing .message-reference-chip__name,
+.message-reference-chip.is-missing .message-reference-chip__meta {
+  color: #c05858;
 }
 
 .assistant-block {
@@ -870,6 +916,31 @@ table {
   width: 100%;
   border-collapse: collapse;
   background: #fff;
+  table-layout: fixed;
+}
+
+.library-col-id {
+  width: 11%;
+}
+
+.library-col-name {
+  width: 24%;
+}
+
+.library-col-type {
+  width: 14%;
+}
+
+.library-col-date {
+  width: 14%;
+}
+
+.library-col-desc {
+  width: 19%;
+}
+
+.library-col-action {
+  width: 18%;
 }
 
 th,
@@ -877,10 +948,17 @@ td {
   border: 1px solid rgba(0, 0, 0, 0.24);
   padding: 10px 12px;
   text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 th {
   font-weight: 700;
+}
+
+.table-action + .table-action {
+  margin-left: 10px;
 }
 
 .table-action {
@@ -891,6 +969,29 @@ th {
 
 .table-action--danger {
   color: #ff4e38;
+}
+
+.toast-message {
+  position: fixed;
+  left: 50%;
+  bottom: 36px;
+  transform: translateX(-50%) translateY(8px);
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: rgba(34, 37, 54, 0.92);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1;
+  box-shadow: 0 12px 28px rgba(17, 19, 31, 0.22);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease, transform 160ms ease;
+  z-index: 10020;
+}
+
+.toast-message.is-visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }
 
 .doc-panel {
