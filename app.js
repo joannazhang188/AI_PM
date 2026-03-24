@@ -1432,6 +1432,7 @@ async function saveDocumentEdits() {
   const documentItem = getDocumentById(state.activeDocumentId);
   if (!documentItem) return;
   const content = state.docEditorText;
+  let nextDocument;
   try {
     const response = await fetch(`/api/artifacts/${documentItem.id}`, {
       method: "PATCH",
@@ -1448,12 +1449,12 @@ async function saveDocumentEdits() {
     if (!response.ok) {
       throw new Error(data.error || "保存文档失败");
     }
-    upsertDocumentEntity({
+    nextDocument = upsertDocumentEntity({
       ...(data.artifact || data),
       isEdited: true,
     });
   } catch (error) {
-    upsertDocumentEntity({
+    nextDocument = upsertDocumentEntity({
       ...documentItem,
       content,
       updatedAt: new Date().toLocaleString("zh-CN", { hour12: false }),
@@ -1461,8 +1462,12 @@ async function saveDocumentEdits() {
       isEdited: true,
     });
   }
+  if (nextDocument) {
+    state.activeDocumentId = nextDocument.id;
+  }
   state.docIsEditing = false;
   state.docEditorText = "";
+  state.docMode = "preview";
   render();
 }
 

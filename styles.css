@@ -635,6 +635,18 @@ button {
   padding: 14px 10px 8px 0;
 }
 
+.conversation-view .composer-card {
+  width: 100%;
+  max-width: none;
+  margin-top: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.conversation-view .composer-inner {
+  padding: 16px 18px 12px;
+}
+
 .conversation-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -796,7 +808,7 @@ button {
 }
 
 .chat-input-dock {
-  padding: 14px 16px 16px;
+  padding: 12px 8px 12px 0;
   border-top: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.58);
   position: sticky;
